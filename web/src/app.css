@@ -1,0 +1,197 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════════════════════
+   CORTEX MDT — Theme System
+   Dark-only. Multiple accent color themes.
+   All layout values scale via --mdt-scale (1080p baseline).
+   ═══════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Resolution Scale (set by JS) ── */
+  --mdt-scale: 1;
+
+  /* ── Geometry ── */
+  --mdt-radius: calc(6px * var(--mdt-scale));
+  --mdt-radius-sm: calc(4px * var(--mdt-scale));
+  --mdt-radius-lg: calc(10px * var(--mdt-scale));
+  --mdt-bezel-width: calc(3px * var(--mdt-scale));
+  --mdt-sidebar-width: calc(56px * var(--mdt-scale));
+  --mdt-sidebar-expanded: calc(190px * var(--mdt-scale));
+  --mdt-toolbar-height: calc(52px * var(--mdt-scale));
+
+  /* ── Core Palette (Dark — invariant across themes) ── */
+  --mdt-bg: #0b0d11;
+  --mdt-surface: rgba(14, 17, 23, 0.92);
+  --mdt-surface-2: rgba(20, 24, 32, 0.88);
+  --mdt-surface-3: rgba(28, 33, 44, 0.80);
+  --mdt-border: rgba(255, 255, 255, 0.08);
+  --mdt-border-2: rgba(255, 255, 255, 0.14);
+  --mdt-text: #e4e8ef;
+  --mdt-text-dim: rgba(228, 232, 239, 0.65);
+  --mdt-text-muted: rgba(228, 232, 239, 0.38);
+
+  /* ── Semantic States ── */
+  --mdt-success: #34d399;
+  --mdt-error: #f87171;
+  --mdt-warning: #fbbf24;
+
+  /* ── Bezel (aluminum frame) ── */
+  --mdt-bezel: linear-gradient(
+    135deg,
+    rgba(180, 185, 195, 0.35) 0%,
+    rgba(140, 145, 155, 0.22) 25%,
+    rgba(100, 105, 115, 0.18) 50%,
+    rgba(140, 145, 155, 0.22) 75%,
+    rgba(180, 185, 195, 0.35) 100%
+  );
+  --mdt-bezel-edge: rgba(255, 255, 255, 0.15);
+  --mdt-bezel-shadow: 0 0 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* ── Panel Surfaces ── */
+  --mdt-sidebar: rgba(10, 12, 18, 0.95);
+  --mdt-toolbar: rgba(12, 15, 20, 0.92);
+
+  /* ── Default Theme: Steel Blue ── */
+  --mdt-accent: #60a5fa;
+  --mdt-accent-dim: rgba(96, 165, 250, 0.15);
+  --mdt-accent-glow: rgba(96, 165, 250, 0.25);
+}
+
+/* ── Theme: Emerald ── */
+[data-theme="emerald"] {
+  --mdt-accent: #34d399;
+  --mdt-accent-dim: rgba(52, 211, 153, 0.15);
+  --mdt-accent-glow: rgba(52, 211, 153, 0.25);
+}
+
+/* ── Theme: Amber ── */
+[data-theme="amber"] {
+  --mdt-accent: #fbbf24;
+  --mdt-accent-dim: rgba(251, 191, 36, 0.15);
+  --mdt-accent-glow: rgba(251, 191, 36, 0.25);
+}
+
+/* ── Theme: Rose ── */
+[data-theme="rose"] {
+  --mdt-accent: #fb7185;
+  --mdt-accent-dim: rgba(251, 113, 133, 0.15);
+  --mdt-accent-glow: rgba(251, 113, 133, 0.25);
+}
+
+/* ── Theme: Violet ── */
+[data-theme="violet"] {
+  --mdt-accent: #a78bfa;
+  --mdt-accent-dim: rgba(167, 139, 250, 0.15);
+  --mdt-accent-glow: rgba(167, 139, 250, 0.25);
+}
+
+/* ── Theme: Cyan (es_lib compatible) ── */
+[data-theme="cyan"] {
+  --mdt-accent: #22d3ee;
+  --mdt-accent-dim: rgba(34, 211, 238, 0.15);
+  --mdt-accent-glow: rgba(34, 211, 238, 0.25);
+}
+
+/* ── Theme: Cortex (Signature — warm white/gold) ── */
+[data-theme="cortex"] {
+  --mdt-accent: #e8d5b5;
+  --mdt-accent-dim: rgba(232, 213, 181, 0.12);
+  --mdt-accent-glow: rgba(232, 213, 181, 0.20);
+}
+
+/* ── Civilian Mode: Gold / Civic ── */
+[data-mode="civilian"] {
+  --civ-gold: #c9a84c;
+  --civ-gold-dim: rgba(201, 168, 76, 0.12);
+  --civ-gold-glow: rgba(201, 168, 76, 0.35);
+  --civ-gold-bright: #e4c867;
+  --civ-cream: #f0e6d0;
+  --civ-slate: #8b9bb4;
+  --civ-border: rgba(201, 168, 76, 0.15);
+  --civ-text-muted: #6b7a90;
+  --civ-accent: var(--civ-gold);
+  --civ-accent-dim: var(--civ-gold-dim);
+  --civ-accent-glow: var(--civ-gold-glow);
+
+  --mdt-accent: #c9a84c;
+  --mdt-accent-dim: rgba(201, 168, 76, 0.15);
+  --mdt-accent-glow: rgba(201, 168, 76, 0.25);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Base Resets
+   ═══════════════════════════════════════════════════════════ */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  user-select: none;
+  background: transparent;
+  font-family: 'Outfit', sans-serif;
+  font-size: calc(14px * var(--mdt-scale));
+  color: var(--mdt-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* NUI: no background, the game renders behind */
+body {
+  background: transparent !important;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: calc(5px * var(--mdt-scale));
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--mdt-border-2);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+/* ═══════════════════════════════════════════════════════════
+   Utility Classes
+   ═══════════════════════════════════════════════════════════ */
+
+@layer utilities {
+  .text-accent {
+    color: var(--mdt-accent);
+  }
+
+  .bg-accent {
+    background-color: var(--mdt-accent);
+  }
+
+  .bg-accent-dim {
+    background-color: var(--mdt-accent-dim);
+  }
+
+  .border-accent {
+    border-color: var(--mdt-accent);
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 12px var(--mdt-accent-glow);
+  }
+
+  .font-mono {
+    font-family: 'Share Tech Mono', 'Courier New', monospace;
+  }
+}
