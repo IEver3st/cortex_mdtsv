@@ -4,15 +4,30 @@
   import { dataStore } from '../lib/stores/data.svelte.js';
   import { isEnvBrowser } from '../lib/utils/nui.js';
   import { getGreeting } from '../lib/utils/helpers.js';
-  import { Building2, Shield, FileText, Car, AlertTriangle, Bell, ChevronRight, Sparkles, Users } from 'lucide-svelte';
+  import {
+    Car,
+    FileText,
+    AlertTriangle,
+    Shield,
+    Bell,
+    ChevronRight,
+    Plus,
+    Users,
+    X,
+    Search,
+  } from '@lucide/svelte';
 
   let mounted = $state(false);
   let busyCitizenId = $state(null);
   let generating = $state(false);
+  let searchOpen = $state(false);
+  let searchQuery = $state('');
+  let searchInputEl = $state(null);
   let greeting = $derived(getGreeting());
   let civ = $derived(mdtStore.civilian);
   let sessionState = $derived(dataStore.standaloneCivilianState);
   let personas = $derived(dataStore.standaloneCitizens || []);
+  let activePersona = $derived(personas.find((p) => p.isActive) ?? null);
   let displayName = $derived(
     civ.firstName && civ.lastName
       ? `${civ.firstName} ${civ.lastName}`
@@ -20,15 +35,32 @@
   );
 
   let notices = $state([]);
-  let quickActions = [
-    { id: 'civ-identity', label: 'View Identity', icon: Shield, desc: 'Review the active civilian identity card' },
-    { id: 'civ-vehicles', label: 'My Vehicles', icon: Car, desc: 'Check vehicle ownership and registration' },
-    { id: 'civ-records', label: 'My Records', icon: FileText, desc: 'Review citations, warrants, and history' },
-    { id: 'civ-services', label: 'City Services', icon: Building2, desc: 'Access municipal services and forms' },
-  ];
+  let civStats = $derived([
+    { key: 'vehicles', label: 'Registered Vehicles', value: civ.vehicleCount || 0, icon: Car, color: '--mdt-accent' },
+    { key: 'citations', label: 'Active Citations', value: civ.citationCount || 0, icon: FileText, color: '--mdt-warning' },
+    { key: 'warrants', label: 'Active Warrants', value: civ.warrantCount || 0, icon: AlertTriangle, color: '--mdt-error' },
+    { key: 'records', label: 'Record Entries', value: civ.recordCount || 0, icon: Shield, color: '--mdt-success' },
+  ]);
 
   function navigate(pageId) {
     mdtStore.activePage = pageId;
+  }
+
+  async function toggleSearch() {
+    searchOpen = !searchOpen;
+    if (searchOpen) {
+      await Promise.resolve();
+      searchInputEl?.focus();
+    } else {
+      searchQuery = '';
+    }
+  }
+
+  function handleSearchKey(e) {
+    if (e.key === 'Escape') {
+      searchOpen = false;
+      searchQuery = '';
+    }
   }
 
   onMount(() => {
@@ -62,6 +94,12 @@
     busyCitizenId = null;
   }
 
+  async function handleUnclaim(citizenId) {
+    busyCitizenId = citizenId;
+    await dataStore.unclaimStandaloneCivilian(citizenId);
+    busyCitizenId = null;
+  }
+
   function formatTime(timestamp) {
     if (!timestamp) return '';
     const then = new Date(timestamp);
@@ -76,10 +114,43 @@
   }
 </script>
 
-<div class="civ-dashboard" class:mounted>
+<div class="dashboard" class:mounted>
+  <!-- ── Header Row ──────────────────────────────── -->
+  <div class="dash-header">
+    <div class="header-right">
+      <!-- Expandable Search -->
+      <div class="search-wrap" class:open={searchOpen}>
+        {#if searchOpen}
+          <input
+            bind:this={searchInputEl}
+            class="search-input font-mono"
+            type="text"
+            placeholder="Search portal..."
+            bind:value={searchQuery}
+            onkeydown={handleSearchKey}
+          />
+          <button class="search-close-btn" onclick={toggleSearch} title="Close search">
+            <X size={14} />
+          </button>
+        {:else}
+          <button class="search-icon-btn" onclick={toggleSearch} title="Search">
+            <Search size={16} />
+          </button>
+        {/if}
+      </div>
+
+      <!-- Live status -->
+      <div class="duty-status-chip" style="--status-color: {civ.citizenId ? 'var(--mdt-success)' : 'var(--mdt-text-muted)'}">
+        <span class="duty-dot"></span>
+        <span class="duty-label font-mono">{civ.citizenId ? 'ACTIVE' : 'NO PROFILE'}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Welcome Banner ─────────────────────────── -->
   <div class="welcome-bar">
     <div class="welcome-left">
-      <h1 class="welcome-greeting">{greeting},</h1>
+      <span class="welcome-greeting">{greeting},</span>
       <span class="welcome-name">{displayName}</span>
       <div class="welcome-meta font-mono">
         <span class="meta-role">CITIZEN</span>
@@ -87,152 +158,348 @@
         <span class="meta-id">{civ.citizenId || 'UNCLAIMED'}</span>
       </div>
     </div>
-    <div class="status-badge" class:status-badge-muted={!civ.citizenId}>
-      <span class="status-dot"></span>
-      <span class="status-label font-mono">{civ.citizenId ? 'ACTIVE' : 'NO PROFILE'}</span>
-    </div>
   </div>
 
-  <div class="quick-grid">
-    {#each quickActions as action, index (action.id)}
-      {@const Icon = action.icon}
-      <button class="quick-card" style={`--stagger: ${index};`} onclick={() => navigate(action.id)}>
-        <div class="quick-icon-wrap">
-          <Icon size={22} strokeWidth={1.5} />
+  <!-- ── Stats (single strip) ──────────────────────── -->
+  <div class="stats-strip">
+    {#each civStats as card (card.key)}
+      {@const Icon = card.icon}
+      <button
+        class="stat-cell"
+        style="--card-color: var({card.color})"
+        onclick={() => {
+          if (card.key === 'vehicles') navigate('civ-vehicles');
+          else if (card.key === 'citations' || card.key === 'records') navigate('civ-records');
+          else if (card.key === 'warrants') navigate('civ-records');
+        }}
+      >
+        <div class="stat-icon">
+          <Icon size="100%" />
         </div>
-        <div class="quick-text">
-          <span class="quick-label">{action.label}</span>
-          <span class="quick-desc">{action.desc}</span>
+        <div class="stat-info">
+          <span class="stat-value font-mono">{card.value}</span>
+          <span class="stat-label">{card.label}</span>
         </div>
-        <div class="quick-arrow">
-          <ChevronRight size={16} strokeWidth={2} />
-        </div>
+        <div class="stat-bar" style="--bar-pct: {Math.min(100, card.value * 20)}%"></div>
       </button>
     {/each}
   </div>
 
-  <div class="persona-panel">
-    <div class="panel-header">
-      <div class="panel-header-copy">
-        <Users size={16} strokeWidth={1.5} />
-        <h2 class="panel-title">Session Personas</h2>
-      </div>
-      <button class="generate-btn" onclick={handleGenerate} disabled={generating || sessionState.standaloneEnabled === false}>
-        <Sparkles size={14} strokeWidth={1.8} />
-        <span>{generating ? 'Generating...' : 'Generate New Citizen'}</span>
-      </button>
-    </div>
+  <!-- ── Main Grid ─────────────────────────────────── -->
+  <div class="main-grid">
 
-    {#if sessionState.standaloneEnabled === false}
-      <div class="empty-state persona-empty">
-        <span class="empty-text">Standalone civilian generation is only available while the MDT framework mode is `standalone`.</span>
-      </div>
-    {:else if personas.length === 0}
-      <div class="empty-state persona-empty">
-        <span class="empty-text">No civilians generated for this session yet.</span>
-      </div>
-    {:else}
-      <div class="persona-list">
-        {#each personas as persona (persona.citizenId)}
-          <div class="persona-card">
-            <div class="persona-main">
-              <div class="persona-top">
-                <div>
-                  <h3 class="persona-name">{persona.fullName}</h3>
-                  <span class="persona-id font-mono">{persona.citizenId}</span>
-                </div>
-                <span class="persona-badge font-mono" class:persona-badge-active={persona.isActive}>
-                  {persona.isActive ? 'ACTIVE' : persona.claimed ? 'CLAIMED' : 'UNCLAIMED'}
-                </span>
-              </div>
-              <div class="persona-meta font-mono">
-                <span>{persona.dateOfBirth}</span>
-                <span class="meta-sep"></span>
-                <span>{persona.occupation}</span>
-                <span class="meta-sep"></span>
-                <span>{persona.phone}</span>
-              </div>
-              <p class="persona-address">{persona.address}</p>
-            </div>
-            <button class="persona-action" onclick={() => handleActivate(persona.citizenId)} disabled={busyCitizenId === persona.citizenId}>
-              {#if busyCitizenId === persona.citizenId}
-                Applying...
-              {:else if persona.isActive}
-                Active
-              {:else if persona.isOwner}
-                Switch
-              {:else}
-                Claim
-              {/if}
-            </button>
+    <!-- Column 1: Persona Management -->
+    <div class="col col-left">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title-row">
+            <Users size={13} class="panel-icon" />
+            <h2 class="panel-title">Session Personas</h2>
           </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
-  <div class="notices-panel">
-    <div class="panel-header">
-      <div class="panel-header-copy">
-        <Bell size={16} strokeWidth={1.5} />
-        <h2 class="panel-title">Notices & Alerts</h2>
-      </div>
-      {#if notices.length > 0}
-        <span class="panel-badge font-mono">{notices.length}</span>
-      {/if}
-    </div>
-    <div class="notices-list">
-      {#if notices.length === 0}
-        <div class="empty-state">
-          <span class="empty-text">No notices at this time</span>
+          <button class="btn-rect generate-btn" onclick={handleGenerate} disabled={generating || sessionState.standaloneEnabled === false}>
+            <Plus size={14} strokeWidth={2.5} />
+            <span>{generating ? 'Generating...' : 'Generate New'}</span>
+          </button>
         </div>
-      {:else}
-        {#each notices as notice (notice.id)}
-          <div class="notice-item" class:notice-warning={notice.type === 'warning'}>
-            <div class="notice-icon-wrap">
-              {#if notice.type === 'warning'}
-                <AlertTriangle size={14} strokeWidth={2} />
-              {:else}
-                <Bell size={14} strokeWidth={2} />
-              {/if}
-            </div>
-            <div class="notice-content">
-              <div class="notice-top">
-                <h3 class="notice-title">{notice.title}</h3>
-                <span class="notice-time font-mono">{formatTime(notice.time)}</span>
-              </div>
-              <p class="notice-text">{notice.content}</p>
-            </div>
+
+        {#if sessionState.standaloneEnabled === false}
+          <div class="empty-state">
+            <span>{sessionState.error || 'Standalone civilian generation is only available while the MDT framework mode is `standalone`.'}</span>
           </div>
-        {/each}
-      {/if}
+        {:else if personas.length === 0}
+          <div class="empty-state">
+            <span>No civilians generated for this session yet.</span>
+          </div>
+        {:else}
+          {#if activePersona}
+            <div class="active-spotlight">
+              <span class="active-spotlight-kicker font-mono">Current session</span>
+              <span class="active-spotlight-name">{activePersona.fullName}</span>
+              <span class="active-spotlight-id font-mono">{activePersona.citizenId}</span>
+            </div>
+          {/if}
+          <div class="persona-list">
+            {#each personas as persona (persona.citizenId)}
+              <div
+                class="persona-row"
+                class:persona-row-active={persona.isActive}
+              >
+                <div class="persona-main">
+                  <div class="persona-top">
+                    <div>
+                      <h3 class="persona-name">{persona.fullName}</h3>
+                      <span class="persona-id font-mono">{persona.citizenId}</span>
+                    </div>
+                  </div>
+                  <div class="persona-meta font-mono">
+                    <span>{persona.dateOfBirth}</span>
+                    <span class="meta-sep"></span>
+                    <span>{persona.occupation}</span>
+                    <span class="meta-sep"></span>
+                    <span>{persona.phone}</span>
+                  </div>
+                  <p class="persona-address">{persona.address}</p>
+                </div>
+                <div class="persona-actions">
+                  {#if !persona.isActive}
+                    <button class="btn-rect persona-action-primary" onclick={() => handleActivate(persona.citizenId)} disabled={busyCitizenId === persona.citizenId}>
+                      {#if busyCitizenId === persona.citizenId}
+                        Applying...
+                      {:else if persona.isOwner}
+                        Switch
+                      {:else}
+                        Claim
+                      {/if}
+                    </button>
+                  {/if}
+                  {#if persona.isOwner}
+                    <button class="btn-rect persona-action-unclaim" onclick={() => handleUnclaim(persona.citizenId)} disabled={busyCitizenId === persona.citizenId}>
+                      Unclaim
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    </div>
+
+    <!-- Column 2: notices + quick access (one surface) -->
+    <div class="col col-right">
+      <div class="panel panel-stack">
+        <div class="panel-header">
+          <div class="panel-title-row">
+            <Bell size={13} class="panel-icon" />
+            <h2 class="panel-title">Notices & Alerts</h2>
+          </div>
+          {#if notices.length > 0}
+            <span class="panel-badge font-mono">{notices.length}</span>
+          {/if}
+        </div>
+        <div class="notices-list">
+          {#if notices.length === 0}
+            <div class="empty-state">
+              <span>No notices at this time</span>
+            </div>
+          {:else}
+            {#each notices as notice (notice.id)}
+              <div class="notice-item" class:notice-warning={notice.type === 'warning'}>
+                <div class="notice-icon-wrap">
+                  {#if notice.type === 'warning'}
+                    <AlertTriangle size={14} strokeWidth={2} />
+                  {:else}
+                    <Bell size={14} strokeWidth={2} />
+                  {/if}
+                </div>
+                <div class="notice-content">
+                  <div class="notice-top">
+                    <h3 class="notice-title">{notice.title}</h3>
+                    <span class="notice-time font-mono">{formatTime(notice.time)}</span>
+                  </div>
+                  <p class="notice-text">{notice.content}</p>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+
+        <div class="panel-divider"></div>
+
+        <div class="panel-header panel-header-sub">
+          <div class="panel-title-row">
+            <Shield size={13} class="panel-icon" />
+            <h2 class="panel-title">Quick Access</h2>
+          </div>
+        </div>
+        <div class="quick-list">
+          <button class="quick-item" onclick={() => navigate('civ-identity')}>
+            <span class="quick-item-label">View Identity</span>
+            <ChevronRight size={14} />
+          </button>
+          <button class="quick-item" onclick={() => navigate('civ-vehicles')}>
+            <span class="quick-item-label">My Vehicles</span>
+            <ChevronRight size={14} />
+          </button>
+          <button class="quick-item" onclick={() => navigate('civ-records')}>
+            <span class="quick-item-label">My Records</span>
+            <ChevronRight size={14} />
+          </button>
+          <button class="quick-item" onclick={() => navigate('civ-services')}>
+            <span class="quick-item-label">City Services</span>
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
 
 <style>
-  .civ-dashboard {
-    padding: calc(24px * var(--mdt-scale));
+  .dashboard {
+    flex: 1;
     display: flex;
     flex-direction: column;
-    gap: calc(18px * var(--mdt-scale));
+    gap: calc(12px * var(--mdt-scale));
+    padding: calc(18px * var(--mdt-scale)) calc(22px * var(--mdt-scale));
+    overflow-y: auto;
     opacity: 0;
-    transform: translateY(calc(8px * var(--mdt-scale)));
+    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  .civ-dashboard.mounted {
-    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  .dashboard.mounted {
+    opacity: 1;
   }
 
-  .welcome-bar {
+  /* ── Header ─────────────────────────────────────────── */
+  .dash-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: calc(12px * var(--mdt-scale));
-    padding: calc(20px * var(--mdt-scale)) calc(22px * var(--mdt-scale));
-    background: var(--mdt-surface);
-    border: 1px solid var(--civ-border, var(--mdt-border));
-    border-radius: var(--mdt-radius-lg);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: calc(10px * var(--mdt-scale));
+    flex-shrink: 0;
+  }
+
+  /* ── Search ─────────────────────────────────────────── */
+  .search-wrap {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .search-icon-btn {
+    width: calc(34px * var(--mdt-scale));
+    height: calc(34px * var(--mdt-scale));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--mdt-surface-2);
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    color: var(--mdt-text-dim);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .search-icon-btn :global(svg) {
+    width: calc(16px * var(--mdt-scale));
+    height: calc(16px * var(--mdt-scale));
+  }
+
+  .search-icon-btn:hover {
+    background: var(--mdt-surface-3);
+    color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 30%, transparent);
+  }
+
+  .search-wrap.open {
+    background: var(--mdt-surface-2);
+    border: 1px solid color-mix(in srgb, var(--mdt-accent) 40%, transparent);
+    border-radius: var(--mdt-radius);
+    overflow: hidden;
+    animation: expandSearch 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes expandSearch {
+    from { width: calc(34px * var(--mdt-scale)); opacity: 0.5; }
+    to { width: calc(200px * var(--mdt-scale)); opacity: 1; }
+  }
+
+  .search-input {
+    flex: 1;
+    min-width: 0;
+    width: calc(160px * var(--mdt-scale));
+    padding: calc(7px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    background: transparent;
+    border: none;
+    color: var(--mdt-text);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: calc(11px * var(--mdt-scale));
+    outline: none;
+    letter-spacing: 0.04em;
+  }
+
+  .search-input::placeholder {
+    color: var(--mdt-text-muted);
+  }
+
+  .search-close-btn {
+    position: relative;
+    width: calc(28px * var(--mdt-scale));
+    height: calc(28px * var(--mdt-scale));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: none;
+    border: none;
+    color: var(--mdt-text-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-right: calc(3px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    transition: color 0.12s ease;
+  }
+  .search-close-btn::after {
+    content: '';
+    position: absolute;
+    inset: calc(-6px * var(--mdt-scale));
+  }
+
+  .search-close-btn :global(svg) {
+    width: calc(14px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
+  }
+
+  .search-close-btn:hover {
+    color: var(--mdt-error);
+  }
+
+  /* ── Header status chip ─────────────────────────────── */
+  .duty-status-chip {
+    display: flex;
+    align-items: center;
+    gap: calc(7px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    background: color-mix(in srgb, var(--status-color) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--status-color) 22%, transparent);
+    border-radius: var(--mdt-radius-sm);
+    transition: background 0.35s ease, border-color 0.35s ease;
+  }
+
+  .duty-dot {
+    width: calc(6px * var(--mdt-scale));
+    height: calc(6px * var(--mdt-scale));
+    border-radius: 50%;
+    background: var(--status-color);
+    box-shadow: 0 0 calc(6px * var(--mdt-scale)) color-mix(in srgb, var(--status-color) 60%, transparent);
+    animation: pulseDuty 2s ease-in-out infinite;
+    flex-shrink: 0;
+    transition: background 0.35s ease;
+  }
+
+  .duty-label {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--status-color);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: color 0.35s ease;
+  }
+
+  /* ── Welcome (flat bar, no extra card frame) ────────── */
+  .welcome-bar {
+    display: flex;
+    align-items: center;
+    gap: calc(12px * var(--mdt-scale));
+    padding: calc(14px * var(--mdt-scale)) 0 calc(16px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    animation: cardIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .welcome-left {
@@ -242,17 +509,17 @@
   }
 
   .welcome-greeting {
-    font-size: calc(13px * var(--mdt-scale));
-    font-weight: 400;
+    font-size: calc(12px * var(--mdt-scale));
     color: var(--mdt-text-dim);
+    font-weight: 400;
     line-height: 1.2;
   }
 
   .welcome-name {
-    font-size: calc(22px * var(--mdt-scale));
+    font-size: calc(20px * var(--mdt-scale));
     font-weight: 700;
-    color: var(--civ-cream, var(--mdt-text));
-    letter-spacing: -0.02em;
+    color: var(--mdt-text);
+    letter-spacing: -0.01em;
     line-height: 1.2;
   }
 
@@ -267,7 +534,7 @@
   }
 
   .meta-role {
-    color: var(--civ-gold, var(--mdt-accent));
+    color: var(--mdt-accent);
     font-weight: 600;
   }
 
@@ -282,231 +549,251 @@
     color: var(--mdt-text-muted);
   }
 
-  .status-badge {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    background: rgba(52, 211, 153, 0.1);
-    border: 1px solid rgba(52, 211, 153, 0.2);
-    border-radius: calc(20px * var(--mdt-scale));
-  }
-
-  .status-badge-muted {
-    background: rgba(148, 163, 184, 0.08);
-    border-color: rgba(148, 163, 184, 0.18);
-  }
-
-  .status-dot {
-    width: calc(7px * var(--mdt-scale));
-    height: calc(7px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-success);
-    box-shadow: 0 0 calc(6px * var(--mdt-scale)) rgba(52, 211, 153, 0.5);
-    animation: pulse 2s ease-in-out infinite;
-  }
-
-  .status-badge-muted .status-dot {
-    background: var(--mdt-text-muted);
-    box-shadow: none;
-  }
-
-  .status-label {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-success);
-    letter-spacing: 0.1em;
-    font-weight: 600;
-  }
-
-  .status-badge-muted .status-label {
-    color: var(--mdt-text-muted);
-  }
-
-  .quick-grid {
+  /* ── Stats: one strip, internal dividers ─────────────── */
+  .stats-strip {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: calc(10px * var(--mdt-scale));
+    grid-template-columns: repeat(4, 1fr);
+    flex-shrink: 0;
+    background: var(--mdt-surface-2);
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    overflow: hidden;
+    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  .quick-card {
+  .stat-cell {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: calc(14px * var(--mdt-scale));
-    padding: calc(16px * var(--mdt-scale)) calc(18px * var(--mdt-scale));
-    background: var(--mdt-surface);
-    border: 1px solid var(--civ-border, var(--mdt-border));
-    border-radius: var(--mdt-radius);
+    gap: calc(10px * var(--mdt-scale));
+    padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--mdt-border);
     cursor: pointer;
-    font-family: inherit;
+    transition: background 0.2s ease, transform 0.15s ease;
     text-align: left;
-    width: 100%;
-    transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-    animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    animation-delay: calc(var(--stagger) * 60ms);
-    opacity: 0;
-    transform: translateY(calc(6px * var(--mdt-scale)));
+    font-family: inherit;
+    overflow: hidden;
   }
 
-  .quick-card:hover {
-    background: var(--mdt-surface-2);
-    border-color: var(--civ-gold, var(--mdt-accent));
-    box-shadow: 0 0 16px rgba(201, 168, 76, 0.08);
-    transform: translateY(calc(-2px * var(--mdt-scale)));
+  .stat-cell:last-child {
+    border-right: none;
   }
 
-  .quick-card:active {
-    transform: scale(0.98);
+  .stat-cell:hover {
+    background: var(--mdt-surface-3);
   }
 
-  .quick-icon-wrap {
-    width: calc(44px * var(--mdt-scale));
-    height: calc(44px * var(--mdt-scale));
-    border-radius: var(--mdt-radius);
-    background: var(--civ-accent-dim, var(--mdt-accent-dim));
+  .stat-cell:active {
+    transform: scale(0.96);
+  }
+
+  .stat-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: var(--bar-pct);
+    height: calc(2px * var(--mdt-scale));
+    background: var(--card-color);
+    opacity: 0.4;
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .stat-icon {
+    width: calc(28px * var(--mdt-scale));
+    height: calc(28px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    background: color-mix(in srgb, var(--card-color) 12%, transparent);
+    color: var(--card-color);
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    color: var(--civ-gold, var(--mdt-accent));
   }
 
-  .quick-text {
-    flex: 1;
+  .stat-info {
     display: flex;
     flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
+    gap: calc(1px * var(--mdt-scale));
     min-width: 0;
   }
 
-  .quick-label {
-    font-size: calc(14px * var(--mdt-scale));
-    font-weight: 600;
+  .stat-value {
+    font-size: calc(18px * var(--mdt-scale));
+    font-weight: 700;
     color: var(--mdt-text);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
   }
 
-  .quick-desc {
-    font-size: calc(11px * var(--mdt-scale));
+  .stat-label {
+    font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
-  .quick-arrow {
-    color: var(--mdt-text-muted);
-    flex-shrink: 0;
-    transition: transform 0.2s ease, color 0.2s ease;
+  /* ── Main Grid ──────────────────────────────────────── */
+  .main-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: calc(10px * var(--mdt-scale));
+    flex: 1;
+    min-height: 0;
   }
 
-  .quick-card:hover .quick-arrow {
-    color: var(--civ-gold, var(--mdt-accent));
-    transform: translateX(calc(3px * var(--mdt-scale)));
-  }
-
-  .persona-panel,
-  .notices-panel {
-    background: var(--mdt-surface);
-    border: 1px solid var(--civ-border, var(--mdt-border));
-    border-radius: var(--mdt-radius);
-    padding: calc(16px * var(--mdt-scale));
+  .col {
     display: flex;
     flex-direction: column;
-    gap: calc(12px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale));
+    min-height: 0;
+  }
+
+  /* ── Panel ──────────────────────────────────────────── */
+  .panel {
+    background: var(--mdt-surface-2);
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: calc(8px * var(--mdt-scale));
-    color: var(--civ-gold, var(--mdt-accent));
+    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    flex-shrink: 0;
+    background: var(--mdt-surface);
   }
 
-  .panel-header-copy {
+  .panel-title-row {
     display: flex;
     align-items: center;
-    gap: calc(8px * var(--mdt-scale));
+    gap: calc(7px * var(--mdt-scale));
+  }
+
+  .panel-title-row :global(.panel-icon),
+  .panel-title-row :global(svg) {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-accent);
+    flex-shrink: 0;
   }
 
   .panel-title {
-    font-size: calc(13px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text);
-    letter-spacing: 0.01em;
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--mdt-text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
   }
 
   .panel-badge {
-    margin-left: auto;
     font-size: calc(10px * var(--mdt-scale));
-    color: var(--civ-gold, var(--mdt-accent));
-    background: var(--civ-accent-dim, var(--mdt-accent-dim));
+    font-weight: 700;
+    color: var(--mdt-accent);
+    background: var(--mdt-accent-dim);
     padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(10px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     letter-spacing: 0.05em;
   }
 
-  .generate-btn,
-  .persona-action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: calc(6px * var(--mdt-scale));
-    border-radius: calc(999px * var(--mdt-scale));
-    font-family: inherit;
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 600;
-    cursor: pointer;
-    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease;
+  .panel-stack {
+    flex: 1;
+    min-height: 0;
   }
 
-  .generate-btn {
-    border: 1px solid color-mix(in srgb, var(--civ-gold, var(--mdt-accent)) 22%, transparent);
-    background: var(--civ-accent-dim, var(--mdt-accent-dim));
-    color: var(--civ-gold, var(--mdt-accent));
-    padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+  .panel-divider {
+    height: 1px;
+    background: var(--mdt-border);
+    flex-shrink: 0;
   }
 
-  .persona-action {
-    border: 1px solid var(--civ-border, var(--mdt-border));
-    background: transparent;
+  .panel-header-sub {
+    border-bottom: none;
+    padding-top: calc(8px * var(--mdt-scale));
+  }
+
+  /* ── Active persona spotlight ───────────────────────── */
+  .active-spotlight {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-success) 35%, var(--mdt-border));
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--mdt-success) 14%, transparent) 0%,
+      transparent 72%
+    );
+  }
+
+  .active-spotlight-kicker {
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--mdt-success);
+  }
+
+  .active-spotlight-name {
+    font-size: calc(14px * var(--mdt-scale));
+    font-weight: 700;
     color: var(--mdt-text);
-    padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
   }
 
-  .generate-btn:hover:enabled,
-  .persona-action:hover:enabled {
-    transform: translateY(calc(-1px * var(--mdt-scale)));
-    border-color: var(--civ-gold, var(--mdt-accent));
+  .active-spotlight-id {
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-accent);
+    letter-spacing: 0.06em;
   }
 
-  .generate-btn:disabled,
-  .persona-action:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .persona-list,
-  .notices-list {
+  /* ── Persona list ───────────────────────────────────── */
+  .persona-list {
     display: flex;
     flex-direction: column;
-    gap: calc(8px * var(--mdt-scale));
   }
 
-  .persona-card {
+  .persona-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: calc(12px * var(--mdt-scale));
-    padding: calc(14px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
-    background: var(--mdt-surface-2);
-    border: 1px solid color-mix(in srgb, var(--civ-border, var(--mdt-border)) 70%, transparent);
+    padding: calc(12px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    border-left: calc(3px * var(--mdt-scale)) solid transparent;
+    transition: background 0.12s ease, border-left-color 0.12s ease;
+  }
+
+  .persona-row:last-child {
+    border-bottom: none;
+  }
+
+  .persona-row:hover {
+    background: color-mix(in srgb, var(--mdt-surface-3) 85%, transparent);
+  }
+
+  .persona-row-active {
+    border-left-color: var(--mdt-success);
+    background: color-mix(in srgb, var(--mdt-success) 6%, transparent);
+  }
+
+  .persona-row-active:hover {
+    background: color-mix(in srgb, var(--mdt-success) 9%, transparent);
   }
 
   .persona-main {
     display: flex;
     flex-direction: column;
-    gap: calc(5px * var(--mdt-scale));
+    gap: calc(4px * var(--mdt-scale));
     min-width: 0;
     flex: 1;
   }
@@ -519,7 +806,7 @@
   }
 
   .persona-name {
-    font-size: calc(15px * var(--mdt-scale));
+    font-size: calc(14px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text);
   }
@@ -528,23 +815,8 @@
     display: inline-block;
     margin-top: calc(2px * var(--mdt-scale));
     font-size: calc(10px * var(--mdt-scale));
-    color: var(--civ-gold, var(--mdt-accent));
+    color: var(--mdt-accent);
     letter-spacing: 0.08em;
-  }
-
-  .persona-badge {
-    padding: calc(4px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(999px * var(--mdt-scale));
-    background: rgba(201, 168, 76, 0.12);
-    color: var(--civ-gold, var(--mdt-accent));
-    font-size: calc(9px * var(--mdt-scale));
-    letter-spacing: 0.1em;
-    flex-shrink: 0;
-  }
-
-  .persona-badge-active {
-    background: rgba(52, 211, 153, 0.12);
-    color: var(--mdt-success);
   }
 
   .persona-meta {
@@ -563,30 +835,97 @@
     color: var(--mdt-text-dim);
   }
 
+  .btn-rect {
+    border-radius: var(--mdt-radius-sm);
+    font-family: inherit;
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: calc(7px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+  }
+
+  .persona-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    flex-shrink: 0;
+  }
+
+  .persona-action-primary {
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-3);
+    color: var(--mdt-text);
+  }
+
+  .persona-action-primary:hover:enabled {
+    transform: translateY(calc(-1px * var(--mdt-scale)));
+    border-color: color-mix(in srgb, var(--mdt-accent) 45%, var(--mdt-border));
+    color: var(--mdt-accent);
+  }
+
+  .persona-action-unclaim {
+    border: 1px solid color-mix(in srgb, var(--mdt-error) 55%, var(--mdt-border));
+    color: var(--mdt-error);
+    background: color-mix(in srgb, var(--mdt-error) 18%, var(--mdt-surface-2));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--mdt-error) 12%, transparent);
+  }
+
+  .persona-action-unclaim:hover:enabled {
+    transform: translateY(calc(-1px * var(--mdt-scale)));
+    border-color: var(--mdt-error);
+    background: color-mix(in srgb, var(--mdt-error) 28%, var(--mdt-surface-2));
+    color: color-mix(in srgb, var(--mdt-error) 92%, white);
+  }
+
+  .btn-rect:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+
+  /* ── Notices ─────────────────────────────────────────── */
+  .notices-list {
+    display: flex;
+    flex-direction: column;
+  }
+
   .notice-item {
     display: flex;
     align-items: flex-start;
     gap: calc(12px * var(--mdt-scale));
     padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border-radius: var(--mdt-radius-sm);
-    border-left: calc(3px * var(--mdt-scale)) solid var(--civ-gold, var(--mdt-accent));
+    border-bottom: 1px solid var(--mdt-border);
+    transition: background 0.12s ease;
+  }
+
+  .notice-item:last-child {
+    border-bottom: none;
+  }
+
+  .notice-item:hover {
+    background: var(--mdt-surface-3);
   }
 
   .notice-item.notice-warning {
-    border-left-color: var(--mdt-warning);
+    border-left: calc(3px * var(--mdt-scale)) solid var(--mdt-warning);
+  }
+
+  .notice-item:not(.notice-warning) {
+    border-left: calc(3px * var(--mdt-scale)) solid var(--mdt-accent);
   }
 
   .notice-icon-wrap {
     width: calc(28px * var(--mdt-scale));
     height: calc(28px * var(--mdt-scale));
     border-radius: var(--mdt-radius-sm);
-    background: var(--civ-accent-dim, var(--mdt-accent-dim));
+    background: var(--mdt-accent-dim);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    color: var(--civ-gold, var(--mdt-accent));
+    color: var(--mdt-accent);
   }
 
   .notice-warning .notice-icon-wrap {
@@ -610,7 +949,7 @@
   }
 
   .notice-title {
-    font-size: calc(13px * var(--mdt-scale));
+    font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text);
     white-space: nowrap;
@@ -626,30 +965,94 @@
   }
 
   .notice-text {
-    font-size: calc(12px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     color: var(--mdt-text-dim);
     line-height: 1.45;
     margin: 0;
   }
 
-  .empty-state {
-    padding: calc(24px * var(--mdt-scale));
+  /* ── Quick List ─────────────────────────────────────── */
+  .quick-list {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .quick-item {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: space-between;
+    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    background: none;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+    border-radius: 0;
+    cursor: pointer;
+    font-family: inherit;
+    text-align: left;
+    transition: background 0.12s ease;
+    color: var(--mdt-text-dim);
   }
 
-  .persona-empty {
-    justify-content: flex-start;
+  .quick-item:last-child {
+    border-bottom: none;
   }
 
-  .empty-text {
+  .quick-item:hover {
+    background: var(--mdt-surface-3);
+    color: var(--mdt-accent);
+  }
+
+  .quick-item-label {
     font-size: calc(12px * var(--mdt-scale));
+    font-weight: 500;
+  }
+
+  /* ── Generate (match primary surface buttons) ─────────── */
+  .generate-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(11px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-3);
+    color: var(--mdt-text);
+    font-size: calc(10.5px * var(--mdt-scale));
+    font-weight: 600;
+    transition: transform 0.18s ease, opacity 0.18s ease, border-color 0.18s ease, color 0.18s ease, background 0.18s ease;
+  }
+
+  .generate-btn :global(svg) {
+    width: calc(14px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
+    flex-shrink: 0;
+    opacity: 0.9;
+  }
+
+  .generate-btn:hover:enabled {
+    transform: translateY(calc(-1px * var(--mdt-scale)));
+    border-color: color-mix(in srgb, var(--mdt-accent) 45%, var(--mdt-border));
+    color: var(--mdt-accent);
+    background: var(--mdt-surface-3);
+  }
+
+  .generate-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* ── Empty state ────────────────────────────────────── */
+  .empty-state {
+    padding: calc(20px * var(--mdt-scale));
+    text-align: center;
+    font-size: calc(11px * var(--mdt-scale));
     color: var(--mdt-text-muted);
   }
 
+  /* ── Keyframes ──────────────────────────────────────── */
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(calc(8px * var(--mdt-scale))); }
+    from { opacity: 0; transform: translateY(calc(6px * var(--mdt-scale))); }
     to { opacity: 1; transform: translateY(0); }
   }
 
@@ -658,8 +1061,8 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
-  @keyframes pulse {
+  @keyframes pulseDuty {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    50% { opacity: 0.45; }
   }
 </style>

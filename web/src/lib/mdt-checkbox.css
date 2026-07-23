@@ -1,0 +1,72 @@
+/* Custom square checkbox — pair input.mdt-checkbox-input + span.mdt-checkbox-box (siblings). */
+.mdt-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: calc(8px * var(--mdt-scale, 1));
+  cursor: pointer;
+  user-select: none;
+}
+
+.mdt-checkbox-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.mdt-checkbox-box {
+  width: calc(16px * var(--mdt-scale, 1));
+  height: calc(16px * var(--mdt-scale, 1));
+  border-radius: calc(3px * var(--mdt-scale, 1));
+  border: 1px solid var(--mdt-border-2);
+  background: var(--mdt-surface-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.mdt-checkbox-tick {
+  width: calc(10px * var(--mdt-scale, 1));
+  height: calc(10px * var(--mdt-scale, 1));
+  color: var(--mdt-bg);
+  opacity: 0;
+  transform: scale(0.72);
+  transition:
+    opacity 0.12s ease,
+    transform 0.14s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.mdt-checkbox-input:checked + .mdt-checkbox-box {
+  background: var(--mdt-accent);
+  border-color: var(--mdt-accent);
+}
+
+.mdt-checkbox-input:checked + .mdt-checkbox-box .mdt-checkbox-tick {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.mdt-checkbox-input:focus-visible + .mdt-checkbox-box {
+  outline: 2px solid var(--mdt-accent);
+  outline-offset: 2px;
+}
+
+.mdt-checkbox-input:disabled + .mdt-checkbox-box {
+  opacity: 0.45;
+}
+
+.mdt-checkbox:has(.mdt-checkbox-input:disabled) {
+  cursor: not-allowed;
+}
+
+.mdt-checkbox-label {
+  font-size: calc(12px * var(--mdt-scale, 1));
+  font-weight: 600;
+  color: var(--mdt-text);
+  font-family: 'Outfit', sans-serif;
+}

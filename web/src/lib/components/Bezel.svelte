@@ -1,11 +1,10 @@
 <script>
-  /** @type {{ children: import('svelte').Snippet }} */
-  let { children } = $props();
+  let { transparentContent = false } = $props();
 </script>
 
 <div class="bezel-frame">
-  <div class="bezel-inner">
-    {@render children()}
+  <div class="bezel-inner" class:transparent-content={transparentContent}>
+    <slot />
   </div>
 </div>
 
@@ -57,5 +56,9 @@
     display: flex;
     flex-direction: column;
     position: relative;
+  }
+
+  .bezel-inner.transparent-content {
+    background: transparent;
   }
 </style>

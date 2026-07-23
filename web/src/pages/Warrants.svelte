@@ -11,11 +11,6 @@
     quashed: 'var(--mdt-warning)',
   };
 
-  const CHARGE_COLORS = [
-    '#ef4444', '#f97316', '#eab308', '#22c55e',
-    '#3b82f6', '#8b5cf6', '#ec4899', '#06b6d4',
-  ];
-
   let mode = $state('list');
   let activeFilter = $state('active');
   let searchQuery = $state('');
@@ -48,12 +43,26 @@
     );
   });
 
+  let statusSummary = $derived.by(() => {
+    const list = filteredWarrants;
+    const c = { active: 0, served: 0, expired: 0, quashed: 0 };
+    for (const w of list) {
+      if (c[w.status] !== undefined) c[w.status]++;
+    }
+    return { ...c, total: list.length };
+  });
+
   function getStatusColor(status) {
     return STATUS_COLORS[status] || 'var(--mdt-text-muted)';
   }
 
-  function getChargeColor(index) {
-    return CHARGE_COLORS[index % CHARGE_COLORS.length];
+  function statusLabel(status) {
+    if (!status) return '\u2014';
+    return status.charAt(0).toUpperCase() + status.slice(1);
+  }
+
+  function chargeToneClass(index) {
+    return `tone-${index % 3}`;
   }
 
   function formatDate(dateStr) {
@@ -282,42 +291,47 @@
 
 <div class="warrants-page" class:mounted>
   {#if mode === 'list'}
-    <div class="list-mode">
-      <div class="page-header">
+    <div class="list-mode warrant-shell">
+      <header class="page-header">
         <div class="header-left">
           <h2 class="page-title">Warrants</h2>
           <p class="page-subtitle">Manage arrest warrants and court orders</p>
         </div>
-        <button class="btn-new" onclick={openCreate}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <button type="button" class="btn-new" onclick={openCreate}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
           </svg>
           <span>New Warrant</span>
         </button>
-      </div>
+      </header>
 
-      <div class="controls-row">
+      <div class="toolbar-grid" role="toolbar" aria-label="Warrant filters and search">
         <div class="filter-bar">
           {#each [['active', 'Active'], ['all', 'All']] as [key, label]}
             <button
+              type="button"
               class="filter-tab"
               class:active={activeFilter === key}
+              aria-pressed={activeFilter === key}
               onclick={() => switchFilter(key)}
             >{label}</button>
           {/each}
         </div>
         <div class="search-bar">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <label class="sr-only" for="warrant-search">Filter by name or charge</label>
+          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
             <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
           </svg>
           <input
-            type="text"
+            id="warrant-search"
+            type="search"
             class="search-input"
             placeholder="Filter by name or charge..."
+            autocomplete="off"
             bind:value={searchQuery}
           />
           {#if searchQuery}
-            <button class="search-clear" onclick={() => { searchQuery = ''; }}>
+            <button type="button" class="search-clear" onclick={() => { searchQuery = ''; }} aria-label="Clear search">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M18 6L6 18M6 6l12 12" />
               </svg>
@@ -326,10 +340,40 @@
         </div>
       </div>
 
+      {#if !loading && warrants.length > 0}
+        <div class="summary-strip" aria-live="polite">
+          <span class="summary-total"><span class="summary-num font-mono">{statusSummary.total}</span> showing</span>
+          <span class="summary-div" aria-hidden="true"></span>
+          <span class="summary-chip summary-active">Active <span class="font-mono">{statusSummary.active}</span></span>
+          <span class="summary-chip summary-served">Served <span class="font-mono">{statusSummary.served}</span></span>
+          <span class="summary-chip summary-expired">Expired <span class="font-mono">{statusSummary.expired}</span></span>
+          <span class="summary-chip summary-quashed">Quashed <span class="font-mono">{statusSummary.quashed}</span></span>
+        </div>
+      {/if}
+
       {#if loading}
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <p class="loading-text">Loading warrants...</p>
+        <div class="skeleton-list" aria-busy="true" aria-label="Loading warrants">
+          {#each [0, 1, 2, 3] as sk (sk)}
+            <div class="warrant-skeleton">
+              <div class="sk-accent"></div>
+              <div class="sk-body">
+                <div class="sk-row sk-row-top">
+                  <div class="sk-block sk-title"></div>
+                  <div class="sk-block sk-badge"></div>
+                </div>
+                <div class="sk-charges">
+                  <div class="sk-block sk-charge-block"></div>
+                  <div class="sk-block sk-charge-block sk-charge-block-short"></div>
+                </div>
+                <div class="sk-block sk-line"></div>
+                <div class="sk-block sk-line sk-line-short"></div>
+                <div class="sk-row sk-row-bottom">
+                  <div class="sk-block sk-meta"></div>
+                  <div class="sk-block sk-meta sk-meta-short"></div>
+                </div>
+              </div>
+            </div>
+          {/each}
         </div>
       {:else if filteredWarrants.length > 0}
         <div class="warrants-list">
@@ -350,14 +394,14 @@
                     <span class="citizen-id font-mono">{warrant.citizen_id || '\u2014'}</span>
                   </div>
                   <div class="card-meta-right">
-                    <span class="status-badge" style="--badge-color: {getStatusColor(warrant.status)}">{warrant.status || '\u2014'}</span>
+                    <span class="status-badge" style="--badge-color: {getStatusColor(warrant.status)}">{statusLabel(warrant.status)}</span>
                     <span class="card-date font-mono">{formatDate(warrant.created_at)}</span>
                   </div>
                 </div>
 
                 <div class="card-charges">
                   {#each (warrant.charges || []) as charge, ci (charge + ci)}
-                    <span class="charge-pill" style="--charge-color: {getChargeColor(ci)}">{charge}</span>
+                    <span class="warrant-charge {chargeToneClass(ci)}">{charge}</span>
                   {/each}
                 </div>
 
@@ -394,23 +438,24 @@
                     {#if confirmAction === `served-${warrant.id}`}
                       <div class="confirm-row">
                         <span class="confirm-text">Mark as served?</span>
-                        <button class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'served')}>Yes</button>
-                        <button class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
+                        <button type="button" class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'served')}>Yes</button>
+                        <button type="button" class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
                       </div>
                     {:else if confirmAction === `expired-${warrant.id}`}
                       <div class="confirm-row">
                         <span class="confirm-text">Mark as expired?</span>
-                        <button class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'expired')}>Yes</button>
-                        <button class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
+                        <button type="button" class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'expired')}>Yes</button>
+                        <button type="button" class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
                       </div>
                     {:else if confirmAction === `quashed-${warrant.id}`}
                       <div class="confirm-row">
                         <span class="confirm-text">Quash this warrant?</span>
-                        <button class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'quashed')}>Yes</button>
-                        <button class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
+                        <button type="button" class="confirm-yes" onclick={() => handleStatusChange(warrant.id, 'quashed')}>Yes</button>
+                        <button type="button" class="confirm-no" onclick={() => { confirmAction = null; }}>No</button>
                       </div>
                     {:else}
                       <button
+                        type="button"
                         class="action-btn action-served"
                         onclick={() => { confirmAction = `served-${warrant.id}`; }}
                         disabled={saving}
@@ -419,6 +464,7 @@
                         Mark Served
                       </button>
                       <button
+                        type="button"
                         class="action-btn action-expired"
                         onclick={() => { confirmAction = `expired-${warrant.id}`; }}
                         disabled={saving}
@@ -427,6 +473,7 @@
                         Expire
                       </button>
                       <button
+                        type="button"
                         class="action-btn action-quashed"
                         onclick={() => { confirmAction = `quashed-${warrant.id}`; }}
                         disabled={saving}
@@ -443,37 +490,50 @@
         </div>
       {:else}
         <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
             <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
             <polyline points="14 2 14 8 20 8" />
             <line x1="9" y1="15" x2="15" y2="15" />
           </svg>
-          <p class="empty-text">No warrants found</p>
-          <p class="empty-sub">{searchQuery ? 'Try a different search term' : 'Create a new warrant to get started'}</p>
+          <p class="empty-text">No warrants match</p>
+          <p class="empty-sub">{searchQuery ? 'Clear the filter or try another name or charge.' : 'Issue a warrant against a citizen to list it here.'}</p>
+          {#if !searchQuery}
+            <button type="button" class="btn-new empty-cta" onclick={openCreate}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>New Warrant</span>
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
 
   {:else if mode === 'create'}
-    <div class="create-mode">
-      <button class="back-btn" onclick={cancelCreate}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <div class="create-mode warrant-shell">
+      <button type="button" class="back-btn" onclick={cancelCreate}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M19 12H5M12 19l-7-7 7-7" />
         </svg>
         <span>Back to Warrants</span>
       </button>
 
-      <h2 class="section-title">Issue Warrant</h2>
+      <header class="create-header">
+        <h2 class="section-title">Issue Warrant</h2>
+        <p class="create-lead">Select a citizen, add one or more charges, then link an existing report or BOLO if needed.</p>
+      </header>
 
-      <div class="form-card">
+      <div class="form-card form-card-grid">
+        <div class="form-col form-col-main">
         <div class="form-group">
-          <label class="form-label">Citizen</label>
+          <label class="form-label" for="citizen-lookup-input">Citizen</label>
           <div class="citizen-lookup">
             <div class="lookup-input-wrap">
               <svg class="lookup-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
               </svg>
               <input
+                id="citizen-lookup-input"
                 type="text"
                 class="form-input lookup-input"
                 placeholder="Search by name or citizen ID..."
@@ -491,7 +551,7 @@
             {#if showCitizenDropdown && citizenResults.length > 0}
               <div class="citizen-dropdown">
                 {#each citizenResults as cit, ci (cit.citizen_id || ci)}
-                  <button class="dropdown-item" onmousedown={() => selectCitizen(cit)}>
+                  <button type="button" class="dropdown-item" onmousedown={() => selectCitizen(cit)}>
                     <span class="dropdown-name">{cit.first_name} {cit.last_name}</span>
                     <span class="dropdown-cid font-mono">{cit.citizen_id}</span>
                     {#if cit.dob}
@@ -511,17 +571,18 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Charges</label>
+          <label class="form-label" for="warrant-charges-input">Charges</label>
           <div class="tags-wrapper">
             {#each charges as charge, ci (charge + ci)}
-              <span class="charge-tag" style="--charge-color: {getChargeColor(ci)}">
+              <span class="charge-tag {chargeToneClass(ci)}">
                 <span>{charge}</span>
-                <button class="tag-remove" onclick={() => removeCharge(charge)}>
+                <button type="button" class="tag-remove" aria-label="Remove {charge}" onclick={() => removeCharge(charge)}>
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </button>
               </span>
             {/each}
             <input
+              id="warrant-charges-input"
               type="text"
               class="tag-input"
               placeholder={charges.length === 0 ? 'Type a charge and press Enter...' : 'Add another...'}
@@ -530,10 +591,13 @@
             />
           </div>
         </div>
+        </div>
 
+        <div class="form-col form-col-side">
         <div class="form-group">
-          <label class="form-label">Description</label>
+          <label class="form-label" for="warrant-desc">Description</label>
           <textarea
+            id="warrant-desc"
             class="form-textarea"
             placeholder="Provide details about the warrant..."
             bind:value={description}
@@ -543,8 +607,9 @@
 
         <div class="form-row">
           <div class="form-group form-half">
-            <label class="form-label">Linked Report ID (optional)</label>
+            <label class="form-label" for="warrant-report-id">Linked Report ID (optional)</label>
             <input
+              id="warrant-report-id"
               type="text"
               class="form-input font-mono"
               placeholder="RPT-XXXXXXXX-XXXX"
@@ -552,8 +617,9 @@
             />
           </div>
           <div class="form-group form-half">
-            <label class="form-label">Linked BOLO ID (optional)</label>
+            <label class="form-label" for="warrant-bolo-id">Linked BOLO ID (optional)</label>
             <input
+              id="warrant-bolo-id"
               type="text"
               class="form-input font-mono"
               placeholder="BOLO-XXXX"
@@ -561,10 +627,12 @@
             />
           </div>
         </div>
+        </div>
 
-        <div class="form-actions">
-          <button class="btn-cancel" onclick={cancelCreate}>Cancel</button>
+        <div class="form-actions form-actions-span">
+          <button type="button" class="btn-cancel" onclick={cancelCreate}>Cancel</button>
           <button
+            type="button"
             class="btn-primary"
             onclick={handleCreate}
             disabled={!selectedCitizenId || charges.length === 0 || saving}
@@ -578,7 +646,22 @@
 </div>
 
 <style>
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
   .warrants-page {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
     padding: calc(24px * var(--mdt-scale));
     display: flex;
     flex-direction: column;
@@ -598,6 +681,12 @@
     flex-direction: column;
     gap: calc(16px * var(--mdt-scale));
     animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .warrant-shell {
+    width: 100%;
+    min-width: 0;
+    align-self: stretch;
   }
 
   .page-header {
@@ -629,7 +718,7 @@
     display: inline-flex;
     align-items: center;
     gap: calc(6px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(18px * var(--mdt-scale));
     background: var(--mdt-accent);
     color: var(--mdt-bg);
     border: none;
@@ -639,6 +728,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: opacity 0.15s ease, transform 0.1s ease;
+    white-space: nowrap;
   }
 
   .btn-new svg {
@@ -651,13 +741,183 @@
   }
 
   .btn-new:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
-  .controls-row {
-    display: flex;
+  .toolbar-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
     gap: calc(10px * var(--mdt-scale));
     align-items: stretch;
+  }
+
+  @media (max-width: 640px) {
+    .toolbar-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .summary-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    background: var(--mdt-surface);
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+  }
+
+  .summary-total {
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    font-weight: 500;
+  }
+
+  .summary-num {
+    color: var(--mdt-text);
+    font-weight: 600;
+    margin-right: calc(2px * var(--mdt-scale));
+  }
+
+  .summary-div {
+    width: 1px;
+    height: calc(14px * var(--mdt-scale));
+    background: var(--mdt-border-2);
+    margin-inline: calc(2px * var(--mdt-scale));
+  }
+
+  .summary-chip {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-dim);
+    padding: calc(3px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    background: var(--mdt-surface-2);
+    border: 1px solid var(--mdt-border);
+  }
+
+  .summary-chip .font-mono {
+    margin-left: calc(4px * var(--mdt-scale));
+    opacity: 0.95;
+  }
+
+  .summary-active {
+    border-color: color-mix(in srgb, var(--mdt-error) 35%, var(--mdt-border));
+    color: var(--mdt-error);
+  }
+
+  .summary-served {
+    border-color: color-mix(in srgb, var(--mdt-success) 35%, var(--mdt-border));
+    color: var(--mdt-success);
+  }
+
+  .summary-expired {
+    border-color: var(--mdt-border-2);
+    color: var(--mdt-text-muted);
+  }
+
+  .summary-quashed {
+    border-color: color-mix(in srgb, var(--mdt-warning) 35%, var(--mdt-border));
+    color: var(--mdt-warning);
+  }
+
+  .skeleton-list {
+    display: flex;
+    flex-direction: column;
+    gap: calc(10px * var(--mdt-scale));
+  }
+
+  .warrant-skeleton {
+    display: flex;
+    border-radius: var(--mdt-radius);
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface);
+    overflow: hidden;
+    min-height: calc(120px * var(--mdt-scale));
+  }
+
+  .sk-accent {
+    width: calc(4px * var(--mdt-scale));
+    flex-shrink: 0;
+    background: var(--mdt-surface-3);
+  }
+
+  .sk-body {
+    flex: 1;
+    padding: calc(14px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    display: flex;
+    flex-direction: column;
+    gap: calc(10px * var(--mdt-scale));
+  }
+
+  .sk-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(10px * var(--mdt-scale));
+  }
+
+  .sk-block {
+    border-radius: var(--mdt-radius-sm);
+    background: linear-gradient(
+      90deg,
+      var(--mdt-surface-3) 0%,
+      var(--mdt-surface-2) 45%,
+      var(--mdt-surface-3) 90%
+    );
+    background-size: 200% 100%;
+    animation: skShimmer 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  .sk-title {
+    height: calc(14px * var(--mdt-scale));
+    width: 42%;
+    max-width: calc(220px * var(--mdt-scale));
+  }
+
+  .sk-badge {
+    height: calc(18px * var(--mdt-scale));
+    width: calc(56px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+  }
+
+  .sk-charges {
+    display: flex;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .sk-charge-block {
+    height: calc(18px * var(--mdt-scale));
+    width: calc(88px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+  }
+
+  .sk-charge-block-short {
+    width: calc(64px * var(--mdt-scale));
+  }
+
+  .sk-line {
+    height: calc(10px * var(--mdt-scale));
+    width: 100%;
+  }
+
+  .sk-line-short {
+    width: 72%;
+  }
+
+  .sk-meta {
+    height: calc(11px * var(--mdt-scale));
+    width: calc(140px * var(--mdt-scale));
+  }
+
+  .sk-meta-short {
+    width: calc(72px * var(--mdt-scale));
+  }
+
+  @keyframes skShimmer {
+    0% { background-position: 100% 0; }
+    100% { background-position: -100% 0; }
   }
 
   .filter-bar {
@@ -756,29 +1016,6 @@
     color: var(--mdt-text);
   }
 
-  .loading-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: calc(64px * var(--mdt-scale)) 0;
-    gap: calc(12px * var(--mdt-scale));
-  }
-
-  .spinner {
-    width: calc(28px * var(--mdt-scale));
-    height: calc(28px * var(--mdt-scale));
-    border: calc(3px * var(--mdt-scale)) solid var(--mdt-border);
-    border-top-color: var(--mdt-accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .loading-text {
-    font-size: calc(12px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
   .warrants-list {
     display: flex;
     flex-direction: column;
@@ -808,7 +1045,6 @@
 
   .status-active .card-accent {
     background: var(--mdt-error);
-    box-shadow: inset 0 0 calc(8px * var(--mdt-scale)) rgba(239, 68, 68, 0.4);
   }
 
   .status-served .card-accent {
@@ -870,8 +1106,7 @@
 
   .citizen-id {
     font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-accent);
-    opacity: 0.7;
+    color: var(--mdt-text-muted);
     letter-spacing: 0.04em;
   }
 
@@ -887,7 +1122,7 @@
     display: inline-flex;
     align-items: center;
     padding: calc(2px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     font-size: calc(10px * var(--mdt-scale));
     font-weight: 600;
     text-transform: capitalize;
@@ -910,18 +1145,36 @@
     gap: calc(5px * var(--mdt-scale));
   }
 
-  .charge-pill {
+  .warrant-charge {
     display: inline-flex;
     align-items: center;
     padding: calc(2px * var(--mdt-scale)) calc(9px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     font-size: calc(10px * var(--mdt-scale));
     font-weight: 600;
-    background: color-mix(in srgb, var(--charge-color) 14%, transparent);
-    color: var(--charge-color);
-    border: 1px solid color-mix(in srgb, var(--charge-color) 22%, transparent);
     white-space: nowrap;
     line-height: 1.4;
+    border: 1px solid var(--mdt-border-2);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-dim);
+  }
+
+  .warrant-charge.tone-0 {
+    background: color-mix(in srgb, var(--mdt-accent) 10%, var(--mdt-surface-2));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 22%, var(--mdt-border));
+  }
+
+  .warrant-charge.tone-1 {
+    background: color-mix(in srgb, var(--mdt-accent) 16%, var(--mdt-surface-2));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 30%, var(--mdt-border));
+  }
+
+  .warrant-charge.tone-2 {
+    background: color-mix(in srgb, var(--mdt-accent) 22%, var(--mdt-surface-2));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 38%, var(--mdt-border));
   }
 
   .card-description {
@@ -961,7 +1214,7 @@
     color: var(--mdt-text-muted);
     padding: calc(1px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
     background: var(--mdt-surface-2);
-    border-radius: calc(4px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     border: 1px solid var(--mdt-border);
   }
 
@@ -980,7 +1233,7 @@
     padding: calc(2px * var(--mdt-scale)) calc(7px * var(--mdt-scale));
     background: var(--mdt-surface-2);
     border: 1px solid var(--mdt-border);
-    border-radius: calc(4px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
   }
 
   .link-badge svg {
@@ -991,8 +1244,10 @@
 
   .card-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: calc(6px * var(--mdt-scale));
-    padding-top: calc(8px * var(--mdt-scale));
+    margin-top: calc(4px * var(--mdt-scale));
+    padding-top: calc(10px * var(--mdt-scale));
     border-top: 1px solid var(--mdt-border);
   }
 
@@ -1016,7 +1271,7 @@
   }
 
   .action-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .action-btn:disabled {
@@ -1082,7 +1337,7 @@
 
   .confirm-yes:active,
   .confirm-no:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .confirm-yes {
@@ -1105,9 +1360,16 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: calc(56px * var(--mdt-scale)) 0;
-    gap: calc(8px * var(--mdt-scale));
-    opacity: 0.5;
+    padding: calc(56px * var(--mdt-scale)) calc(24px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale));
+    text-align: center;
+    border: 1px dashed var(--mdt-border-2);
+    border-radius: var(--mdt-radius-lg);
+    background: color-mix(in srgb, var(--mdt-surface) 88%, transparent);
+  }
+
+  .empty-cta {
+    margin-top: calc(8px * var(--mdt-scale));
   }
 
   .empty-icon {
@@ -1119,12 +1381,14 @@
   .empty-text {
     font-size: calc(14px * var(--mdt-scale));
     font-weight: 600;
-    color: var(--mdt-text-dim);
+    color: var(--mdt-text);
   }
 
   .empty-sub {
-    font-size: calc(11px * var(--mdt-scale));
+    font-size: calc(12px * var(--mdt-scale));
     color: var(--mdt-text-muted);
+    max-width: calc(36ch * var(--mdt-scale));
+    line-height: 1.5;
   }
 
   .back-btn {
@@ -1155,7 +1419,7 @@
   }
 
   .back-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .section-title {
@@ -1163,6 +1427,19 @@
     font-weight: 700;
     color: var(--mdt-text);
     letter-spacing: -0.01em;
+  }
+
+  .create-header {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    max-width: calc(62ch * var(--mdt-scale));
+  }
+
+  .create-lead {
+    font-size: calc(12px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    line-height: 1.55;
   }
 
   .form-card {
@@ -1173,6 +1450,40 @@
     display: flex;
     flex-direction: column;
     gap: calc(18px * var(--mdt-scale));
+  }
+
+  .form-card-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(18px * var(--mdt-scale));
+  }
+
+  @media (min-width: 900px) {
+    .form-card-grid {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      align-items: start;
+      gap: 0;
+    }
+
+    .form-col-main {
+      padding-right: calc(18px * var(--mdt-scale));
+      border-right: 1px solid var(--mdt-border);
+    }
+
+    .form-col-side {
+      padding-left: calc(18px * var(--mdt-scale));
+    }
+
+    .form-actions-span {
+      grid-column: 1 / -1;
+    }
+  }
+
+  .form-col {
+    display: flex;
+    flex-direction: column;
+    gap: calc(18px * var(--mdt-scale));
+    min-width: 0;
   }
 
   .form-group {
@@ -1236,8 +1547,14 @@
 
   .form-row {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
     gap: calc(12px * var(--mdt-scale));
+  }
+
+  @media (min-width: 520px) {
+    .form-row {
+      grid-template-columns: 1fr 1fr;
+    }
   }
 
   .form-half {
@@ -1270,8 +1587,11 @@
   }
 
   .btn-primary {
-    padding: calc(8px * var(--mdt-scale)) calc(20px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(18px * var(--mdt-scale));
+    border-radius: var(--mdt-radius);
     border: none;
     background: var(--mdt-accent);
     color: var(--mdt-bg);
@@ -1280,6 +1600,7 @@
     font-weight: 600;
     cursor: pointer;
     transition: opacity 0.15s ease, transform 0.1s ease;
+    white-space: nowrap;
   }
 
   .btn-primary:hover {
@@ -1287,11 +1608,11 @@
   }
 
   .btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-primary:disabled {
-    opacity: 0.4;
+    opacity: 0.5;
     cursor: not-allowed;
   }
 
@@ -1443,13 +1764,31 @@
     align-items: center;
     gap: calc(4px * var(--mdt-scale));
     padding: calc(3px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
-    background: color-mix(in srgb, var(--charge-color) 14%, transparent);
-    color: var(--charge-color);
+    border-radius: var(--mdt-radius-sm);
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 500;
-    border: 1px solid color-mix(in srgb, var(--charge-color) 22%, transparent);
+    border: 1px solid var(--mdt-border-2);
+    background: var(--mdt-surface-3);
+    color: var(--mdt-text-dim);
     animation: fadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .charge-tag.tone-0 {
+    background: color-mix(in srgb, var(--mdt-accent) 12%, var(--mdt-surface-3));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 24%, var(--mdt-border));
+  }
+
+  .charge-tag.tone-1 {
+    background: color-mix(in srgb, var(--mdt-accent) 18%, var(--mdt-surface-3));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 32%, var(--mdt-border));
+  }
+
+  .charge-tag.tone-2 {
+    background: color-mix(in srgb, var(--mdt-accent) 24%, var(--mdt-surface-3));
+    color: var(--mdt-text);
+    border-color: color-mix(in srgb, var(--mdt-accent) 40%, var(--mdt-border));
   }
 
   .tag-remove {
@@ -1503,10 +1842,6 @@
   @keyframes cardIn {
     from { opacity: 0; transform: translateY(calc(10px * var(--mdt-scale))); }
     to { opacity: 1; transform: translateY(0); }
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
   }
 
   @keyframes dropdownIn {

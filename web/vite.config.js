@@ -4,6 +4,9 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 export default defineConfig({
   plugins: [svelte()],
   base: './',
+  optimizeDeps: {
+    exclude: ['@lucide/svelte'],
+  },
   build: {
     outDir: '../html',
     emptyOutDir: true,

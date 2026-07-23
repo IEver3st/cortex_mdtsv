@@ -68,6 +68,7 @@
   let showTransferForm = $state(false);
 
   let createType = $state('general');
+  let createSerialNumber = $state('');
   let createDescription = $state('');
   let createPhotoUrl = $state('');
   let createStashLocation = $state('');
@@ -78,16 +79,49 @@
   let transferNotes = $state('');
   let transferNewStatus = $state('in_custody');
 
+  let editType = $state('general');
+  let editSerialNumber = $state('');
+  let editDescription = $state('');
+  let editPhotoUrl = $state('');
+  let editStashLocation = $state('');
+  let editReportId = $state('');
+  let editCaseId = $state('');
+  let editStatus = $state('in_custody');
+  let attachmentName = $state('');
+  let attachmentUrl = $state('');
+  let attachmentType = $state('');
+  let attachmentNotes = $state('');
+
   let evidenceItems = $derived(isEnvBrowser() ? MOCK_EVIDENCE_LIST : dataStore.evidenceList);
   let evidenceTotal = $derived(isEnvBrowser() ? MOCK_EVIDENCE_LIST.length : dataStore.evidenceTotal);
   let detail = $derived(isEnvBrowser() ? MOCK_EVIDENCE_DETAIL : dataStore.selectedEvidence);
   let custody = $derived(isEnvBrowser() ? MOCK_CUSTODY : dataStore.evidenceCustody);
+  let attachments = $derived(isEnvBrowser() ? [] : dataStore.evidenceAttachments);
+  let imageAttachments = $derived((attachments || []).filter((attachment) => {
+    const fileType = String(attachment.file_type || '').toLowerCase();
+    const fileUrl = String(attachment.file_url || '').toLowerCase();
+    return fileType.includes('image')
+      || fileType.includes('photo')
+      || /\.(png|jpe?g|webp|gif|bmp)$/i.test(fileUrl);
+  }));
   let totalPages = $derived(Math.max(1, Math.ceil(evidenceTotal / 20)));
 
   $effect(() => {
     if (mode === 'list' && !isEnvBrowser()) {
       dataStore.fetchEvidence(currentPage);
     }
+  });
+
+  $effect(() => {
+    if (!detail) return;
+    editType = detail.type || 'general';
+    editSerialNumber = detail.serial_number || '';
+    editDescription = detail.description || '';
+    editPhotoUrl = detail.photo_url || '';
+    editStashLocation = detail.stash_location || '';
+    editReportId = detail.report_id || '';
+    editCaseId = detail.case_id || '';
+    editStatus = detail.status || 'in_custody';
   });
 
   function goToList() {
@@ -99,6 +133,7 @@
   function goToCreate() {
     mode = 'create';
     createType = 'general';
+    createSerialNumber = '';
     createDescription = '';
     createPhotoUrl = '';
     createStashLocation = '';
@@ -120,6 +155,7 @@
     await dataStore.createEvidence({
       description: createDescription.trim(),
       type: createType,
+      serialNumber: createSerialNumber.trim() || null,
       photoUrl: createPhotoUrl.trim(),
       stashLocation: createStashLocation.trim(),
       reportId: createReportId.trim() || null,
@@ -149,6 +185,78 @@
     if (!isEnvBrowser()) {
       await dataStore.getEvidenceRecord(detail.id || detail.evidence_id);
     }
+  }
+
+  async function handleSaveEvidence() {
+    if (!detail || !editDescription.trim()) return;
+    creating = true;
+    await dataStore.updateEvidence({
+      evidenceId: detail.id || detail.evidence_id,
+      type: editType,
+      serialNumber: editSerialNumber.trim() || null,
+      description: editDescription.trim(),
+      photoUrl: editPhotoUrl.trim() || null,
+      stashLocation: editStashLocation.trim() || null,
+      reportId: editReportId.trim() || null,
+      caseId: editCaseId.trim() || null,
+      status: editStatus,
+    });
+    if (!isEnvBrowser()) {
+      await dataStore.getEvidenceRecord(detail.id || detail.evidence_id);
+    }
+    creating = false;
+  }
+
+  async function handleAddAttachment() {
+    if (!detail || !attachmentName.trim() || !attachmentUrl.trim()) return;
+    creating = true;
+    await dataStore.addAttachment({
+      parentType: 'evidence',
+      parentId: detail.id || detail.evidence_id,
+      fileName: attachmentName.trim(),
+      fileUrl: attachmentUrl.trim(),
+      fileType: attachmentType.trim() || null,
+      notes: attachmentNotes.trim() || null,
+    });
+    if (!isEnvBrowser()) {
+      await dataStore.getEvidenceRecord(detail.id || detail.evidence_id);
+    }
+    attachmentName = '';
+    attachmentUrl = '';
+    attachmentType = '';
+    attachmentNotes = '';
+    creating = false;
+  }
+
+  async function handleRemoveAttachment(id) {
+    if (!detail) return;
+    creating = true;
+    await dataStore.removeAttachment(id, 'evidence');
+    if (!isEnvBrowser()) {
+      await dataStore.getEvidenceRecord(detail.id || detail.evidence_id);
+    }
+    creating = false;
+  }
+
+  async function handleUseAttachmentAsPhoto(url) {
+    if (!detail || !url) return;
+    creating = true;
+    editPhotoUrl = url;
+    await dataStore.updateEvidence({
+      evidenceId: detail.id || detail.evidence_id,
+      type: editType,
+      serialNumber: editSerialNumber.trim() || null,
+      description: editDescription.trim(),
+      photoUrl: url,
+      stashLocation: editStashLocation.trim() || null,
+      reportId: editReportId.trim() || null,
+      caseId: editCaseId.trim() || null,
+      status: editStatus,
+    });
+    if (!isEnvBrowser()) {
+      await dataStore.getEvidenceRecord(detail.id || detail.evidence_id);
+    }
+    creating = false;
   }
 
   function prevPage() {
@@ -198,6 +306,7 @@
           <div class="table-header">
             <span class="th-tag">Evidence ID</span>
             <span class="th-type">Type</span>
+            <span class="th-serial">Serial</span>
             <span class="th-desc">Description</span>
             <span class="th-officer">Collected By</span>
             <span class="th-status">Status</span>
@@ -208,6 +317,7 @@
             <button class="table-row" onclick={() => openDetail(item.id || item.evidence_id)}>
               <span class="td-tag font-mono">{item.evidence_tag || item.evidence_id}</span>
               <span class="td-type">{getTypeLabel(item.type)}</span>
+              <span class="td-serial font-mono">{item.serial_number || '—'}</span>
               <span class="td-desc">{truncate(item.description, 40)}</span>
               <span class="td-officer">{item.collector_first ? `${item.collector_first} ${item.collector_last}` : (item.collected_by || '—')}</span>
               <span class="td-status">
@@ -322,6 +432,16 @@
               bind:value={createCaseId}
             />
           </div>
+          <div class="form-group form-group-half">
+            <label class="form-label" for="ev-serial">Serial Number (optional)</label>
+            <input
+              id="ev-serial"
+              type="text"
+              class="form-input font-mono"
+              placeholder="SN-000000"
+              bind:value={createSerialNumber}
+            />
+          </div>
         </div>
 
         <button
@@ -349,7 +469,18 @@
             <span class="status-badge" style="--status-color: {getStatusDef(detail.status).color}">{getStatusDef(detail.status).label}</span>
           </div>
         </div>
-        <span class="detail-date font-mono">{formatDate(detail.created_at)}</span>
+        <div class="detail-header-meta">
+          <div class="detail-meta-line">
+            <span class="detail-meta-k">Created</span>
+            <span class="detail-meta-v font-mono">{formatDate(detail.created_at)}</span>
+          </div>
+          {#if detail.collector_first || detail.collected_by}
+            <div class="detail-meta-line">
+              <span class="detail-meta-k">Collected by</span>
+              <span class="detail-meta-v">{detail.collector_first ? `${detail.collector_first} ${detail.collector_last || ''}`.trim() : (typeof detail.collected_by === 'string' ? detail.collected_by : '—')}</span>
+            </div>
+          {/if}
+        </div>
       </div>
 
       <div class="detail-body">
@@ -368,10 +499,38 @@
             </div>
           {/if}
 
+          {#if imageAttachments.length > 0}
+            <div class="detail-section">
+              <h3 class="section-label">Attachment Gallery</h3>
+              <div class="attachment-gallery">
+                {#each imageAttachments as attachment (attachment.id)}
+                  <div class="gallery-card">
+                    <div class="gallery-frame">
+                      <img src={attachment.file_url} alt={attachment.file_name || 'Evidence attachment'} class="gallery-img" />
+                    </div>
+                    <div class="gallery-meta">
+                      <span class="gallery-name">{attachment.file_name}</span>
+                      <div class="gallery-actions">
+                        <a class="gallery-link" href={attachment.file_url} target="_blank" rel="noreferrer">Open</a>
+                        <button class="gallery-btn" onclick={() => handleUseAttachmentAsPhoto(attachment.file_url)} disabled={creating}>
+                          Use as Primary Photo
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {/if}
+
           <div class="detail-meta-grid">
             <div class="meta-block">
               <span class="meta-label">Stash Location</span>
               <span class="meta-value">{detail.stash_location || '—'}</span>
+            </div>
+            <div class="meta-block">
+              <span class="meta-label">Serial Number</span>
+              <span class="meta-value font-mono">{detail.serial_number || 'Not logged'}</span>
             </div>
             <div class="meta-block">
               <span class="meta-label">Collected By</span>
@@ -393,6 +552,96 @@
         </div>
 
         <div class="detail-sidebar">
+          <div class="custody-section">
+            <h3 class="section-label">Update Record</h3>
+            <div class="form-group">
+              <label class="form-label">Type</label>
+              <select class="form-select" bind:value={editType}>
+                {#each EVIDENCE_TYPES as t (t.value)}
+                  <option value={t.value}>{t.label}</option>
+                {/each}
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Serial Number</label>
+              <input class="form-input font-mono" bind:value={editSerialNumber} placeholder="SN-000000" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description</label>
+              <textarea class="form-textarea" rows="3" bind:value={editDescription}></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Photo URL</label>
+              <input class="form-input" bind:value={editPhotoUrl} placeholder="https://..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Stash Location</label>
+              <input class="form-input" bind:value={editStashLocation} placeholder="Locker / vault" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Status</label>
+              <select class="form-select" bind:value={editStatus}>
+                {#each TRANSFER_STATUSES as s (s.value)}
+                  <option value={s.value}>{s.label}</option>
+                {/each}
+              </select>
+            </div>
+            <button class="btn-primary btn-save-evidence" onclick={handleSaveEvidence} disabled={creating || !editDescription.trim()}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><path d="M17 21v-8H7v8M7 3v5h8" /></svg>
+              {#if creating}Saving...{:else}Save Evidence{/if}
+            </button>
+          </div>
+
+          <div class="custody-section">
+            <h3 class="section-label">Attachments</h3>
+            {#if attachments && attachments.length > 0}
+              <div class="custody-timeline">
+                {#each attachments as attachment (attachment.id)}
+                  <div class="custody-entry">
+                    <div class="custody-content">
+                      <div class="custody-header">
+                        <a class="custody-action" href={attachment.file_url} target="_blank" rel="noreferrer">{attachment.file_name}</a>
+                        <div class="attachment-actions">
+                          {#if String(attachment.file_type || '').toLowerCase().includes('image') || String(attachment.file_url || '').match(/\.(png|jpe?g|webp|gif|bmp)$/i)}
+                            <button class="btn-link-inline" onclick={() => handleUseAttachmentAsPhoto(attachment.file_url)} disabled={creating}>
+                              Primary Photo
+                            </button>
+                          {/if}
+                          <button class="btn-remove" onclick={() => handleRemoveAttachment(attachment.id)} aria-label="Remove attachment">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </div>
+                      <p class="custody-notes">{attachment.file_type || 'file'}{attachment.notes ? ` • ${attachment.notes}` : ''}</p>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="tab-empty">No evidence files attached</p>
+            {/if}
+
+            <div class="form-group">
+              <label class="form-label">File Name</label>
+              <input class="form-input" bind:value={attachmentName} placeholder="Lab report.pdf" />
+            </div>
+            <div class="form-group">
+              <label class="form-label">File URL</label>
+              <input class="form-input" bind:value={attachmentUrl} placeholder="https://..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">File Type</label>
+              <input class="form-input" bind:value={attachmentType} placeholder="pdf, image, doc..." />
+            </div>
+            <div class="form-group">
+              <label class="form-label">Notes</label>
+              <input class="form-input" bind:value={attachmentNotes} placeholder="Optional notes" />
+            </div>
+            <button class="btn-primary" onclick={handleAddAttachment} disabled={creating || !attachmentName.trim() || !attachmentUrl.trim()}>
+              {#if creating}Saving...{:else}Add Attachment{/if}
+            </button>
+          </div>
+
           <div class="custody-section">
             <h3 class="section-label">Chain of Custody</h3>
             {#if custody && custody.length > 0}
@@ -561,7 +810,7 @@
   }
 
   .btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-primary:disabled {
@@ -579,7 +828,7 @@
 
   .table-header {
     display: grid;
-    grid-template-columns: 1.4fr 0.8fr 2fr 1.1fr 0.9fr 1fr 1fr;
+    grid-template-columns: 1.2fr 0.8fr 1fr 1.8fr 1.1fr 0.9fr 1fr 1fr;
     gap: calc(8px * var(--mdt-scale));
     padding: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     background: var(--mdt-surface-2);
@@ -593,7 +842,7 @@
 
   .table-row {
     display: grid;
-    grid-template-columns: 1.4fr 0.8fr 2fr 1.1fr 0.9fr 1fr 1fr;
+    grid-template-columns: 1.2fr 0.8fr 1fr 1.8fr 1.1fr 0.9fr 1fr 1fr;
     gap: calc(8px * var(--mdt-scale));
     padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     background: var(--mdt-surface);
@@ -629,6 +878,11 @@
   .td-type {
     color: var(--mdt-text-dim);
     text-transform: capitalize;
+  }
+
+  .td-serial {
+    color: var(--mdt-text-muted);
+    font-size: calc(11px * var(--mdt-scale));
   }
 
   .td-desc {
@@ -719,7 +973,7 @@
   }
 
   .page-btn:active:not(:disabled) {
-    transform: scale(0.95);
+    transform: scale(0.96);
   }
 
   .page-btn:disabled {
@@ -787,7 +1041,7 @@
   }
 
   .back-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .create-form {
@@ -943,10 +1197,34 @@
     align-items: center;
   }
 
-  .detail-date {
-    font-size: calc(11px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
+  .detail-header-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: calc(6px * var(--mdt-scale));
     flex-shrink: 0;
+    text-align: right;
+  }
+
+  .detail-meta-line {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: calc(2px * var(--mdt-scale));
+  }
+
+  .detail-meta-k {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .detail-meta-v {
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 500;
+    color: var(--mdt-text);
   }
 
   .detail-body {
@@ -1000,6 +1278,67 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .attachment-gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(170px * var(--mdt-scale)), 1fr));
+    gap: calc(12px * var(--mdt-scale));
+  }
+
+  .gallery-card {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--mdt-scale));
+    background: var(--mdt-surface);
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    padding: calc(10px * var(--mdt-scale));
+  }
+
+  .gallery-frame {
+    aspect-ratio: 4 / 3;
+    border-radius: var(--mdt-radius-sm);
+    overflow: hidden;
+    background: var(--mdt-surface-2);
+  }
+
+  .gallery-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .gallery-meta {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .gallery-name {
+    color: var(--mdt-text);
+    font-size: calc(12px * var(--mdt-scale));
+    word-break: break-word;
+  }
+
+  .gallery-actions,
+  .attachment-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    flex-wrap: wrap;
+  }
+
+  .gallery-link,
+  .gallery-btn,
+  .btn-link-inline {
+    border: none;
+    background: transparent;
+    color: var(--mdt-accent);
+    padding: 0;
+    font: inherit;
+    cursor: pointer;
+    text-decoration: none;
   }
 
   .detail-meta-grid {
@@ -1211,7 +1550,7 @@
   }
 
   .btn-cancel:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .tab-empty {
@@ -1224,6 +1563,222 @@
 
   .font-mono {
     font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* Detail view — incident-report panel styling */
+  .detail-mode {
+    --ev-panel: #22252c;
+    --ev-panel-inset: #1a1d24;
+    --ev-border: #2d3139;
+    --ev-accent: #3b82f6;
+    --ev-accent-muted: #60a5fa;
+    --ev-tag: #93c5fd;
+    --ev-label: #8b95a8;
+  }
+
+  .detail-mode .back-btn {
+    background: var(--ev-panel);
+    border: 1px solid var(--ev-border);
+    color: var(--ev-accent);
+  }
+
+  .detail-mode .back-btn:hover {
+    background: #262a32;
+    border-color: color-mix(in srgb, var(--ev-accent) 35%, var(--ev-border));
+    color: var(--ev-accent-muted);
+  }
+
+  .detail-mode .detail-header {
+    background: var(--ev-panel);
+    border: 1px solid var(--ev-border);
+    border-radius: calc(6px * var(--mdt-scale));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  }
+
+  .detail-mode .detail-tag {
+    font-size: calc(22px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--ev-tag);
+    letter-spacing: 0.04em;
+  }
+
+  .detail-mode .type-badge {
+    border-radius: calc(6px * var(--mdt-scale));
+    background: rgba(59, 130, 246, 0.1);
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    color: #bfdbfe;
+  }
+
+  .detail-mode .status-badge {
+    border-radius: calc(6px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+  }
+
+  .detail-mode .detail-meta-k {
+    color: var(--ev-label);
+  }
+
+  .detail-mode .detail-meta-v.font-mono {
+    color: var(--ev-accent-muted);
+    font-size: calc(11px * var(--mdt-scale));
+  }
+
+  .detail-mode .detail-body {
+    gap: calc(18px * var(--mdt-scale));
+  }
+
+  .detail-mode .detail-section,
+  .detail-mode .custody-section,
+  .detail-mode .meta-block,
+  .detail-mode .gallery-card {
+    background: var(--ev-panel);
+    border: 1px solid var(--ev-border);
+    border-radius: calc(6px * var(--mdt-scale));
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  }
+
+  .detail-mode .section-label {
+    color: var(--ev-label);
+    letter-spacing: 0.08em;
+    font-size: calc(10px * var(--mdt-scale));
+  }
+
+  .detail-mode .detail-description {
+    color: #e8eaef;
+  }
+
+  .detail-mode .detail-photo-frame,
+  .detail-mode .gallery-frame {
+    border-color: var(--ev-border);
+    background: var(--ev-panel-inset);
+    border-radius: calc(6px * var(--mdt-scale));
+  }
+
+  .detail-mode .form-label {
+    color: var(--ev-label);
+  }
+
+  .detail-mode .form-input,
+  .detail-mode .form-select,
+  .detail-mode .form-textarea {
+    background: var(--ev-panel-inset);
+    border: 1px solid var(--ev-border);
+    border-radius: calc(6px * var(--mdt-scale));
+    color: #e8eaef;
+  }
+
+  .detail-mode .form-input:focus,
+  .detail-mode .form-select:focus,
+  .detail-mode .form-textarea:focus {
+    border-color: var(--ev-accent);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+  }
+
+  .detail-mode .btn-primary {
+    background: var(--ev-accent);
+    color: #ffffff;
+    border-radius: calc(6px * var(--mdt-scale));
+  }
+
+  .detail-mode .btn-primary:hover {
+    opacity: 1;
+    filter: brightness(1.06);
+  }
+
+  .detail-mode .btn-save-evidence svg {
+    width: calc(15px * var(--mdt-scale));
+    height: calc(15px * var(--mdt-scale));
+    flex-shrink: 0;
+  }
+
+  .detail-mode .btn-cancel {
+    background: var(--ev-panel-inset);
+    border-color: var(--ev-border);
+    color: var(--ev-accent-muted);
+    border-radius: calc(6px * var(--mdt-scale));
+  }
+
+  .detail-mode .btn-cancel:hover {
+    border-color: color-mix(in srgb, var(--ev-accent) 40%, var(--ev-border));
+    color: #dbeafe;
+  }
+
+  .detail-mode .btn-transfer {
+    background: transparent;
+    border: 1px solid color-mix(in srgb, var(--ev-accent) 45%, var(--ev-border));
+    color: var(--ev-accent-muted);
+  }
+
+  .detail-mode .btn-transfer:hover {
+    background: rgba(59, 130, 246, 0.08);
+    color: #dbeafe;
+  }
+
+  .detail-mode .gallery-link,
+  .detail-mode .btn-link-inline {
+    color: var(--ev-accent-muted);
+  }
+
+  .detail-mode .gallery-btn {
+    border: 1px solid var(--ev-border);
+    background: var(--ev-panel-inset);
+    color: var(--ev-accent-muted);
+    padding: calc(4px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border-radius: calc(6px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+  }
+
+  .detail-mode .tab-empty {
+    border: 1px dashed var(--ev-border);
+    border-radius: calc(6px * var(--mdt-scale));
+    padding: calc(18px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    background: rgba(0, 0, 0, 0.15);
+    color: var(--ev-label);
+    font-size: calc(11px * var(--mdt-scale));
+  }
+
+  .detail-mode .custody-dot {
+    background: var(--ev-accent);
+    border-color: var(--ev-panel);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
+  }
+
+  .detail-mode .custody-line {
+    background: var(--ev-border);
+  }
+
+  .detail-mode .custody-officer {
+    color: #93c5fd;
+  }
+
+  .detail-mode .custody-notes {
+    background: var(--ev-panel-inset);
+    border-left-color: rgba(59, 130, 246, 0.45);
+    border-radius: calc(4px * var(--mdt-scale));
+  }
+
+  .detail-mode .transfer-form {
+    background: var(--ev-panel);
+    border: 1px solid var(--ev-border);
+  }
+
+  .detail-mode .btn-remove {
+    border: 1px solid var(--ev-border);
+    background: var(--ev-panel-inset);
+    border-radius: calc(6px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    padding: calc(4px * var(--mdt-scale));
+    cursor: pointer;
+    transition: border-color 0.12s ease, color 0.12s ease;
+  }
+
+  .detail-mode .btn-remove:hover {
+    border-color: rgba(248, 113, 113, 0.5);
+    color: #f87171;
+  }
+
+  .detail-mode .meta-label {
+    color: var(--ev-label);
   }
 
   @keyframes fadeIn {

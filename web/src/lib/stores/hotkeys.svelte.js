@@ -6,6 +6,25 @@ const DEFAULT_BINDINGS = {
   reopenTab: 'Ctrl+Shift+Z',
 };
 
+export function normalizeHotkeyBinding(combo, fallback = '') {
+  if (typeof combo !== 'string') return fallback;
+
+  const normalized = combo.trim();
+  return normalized || fallback;
+}
+
+function sanitizeBindings(candidate) {
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return { ...DEFAULT_BINDINGS };
+  }
+
+  const next = { ...DEFAULT_BINDINGS };
+  for (const action of Object.keys(DEFAULT_BINDINGS)) {
+    next[action] = normalizeHotkeyBinding(candidate[action], DEFAULT_BINDINGS[action]);
+  }
+  return next;
+}
+
 const HOTKEY_LABELS = {
   nextTab: 'Next Tab',
   prevTab: 'Previous Tab',
@@ -25,18 +44,28 @@ const HOTKEY_DESCRIPTIONS = {
 function createHotkeysStore() {
   let bindings = $state({ ...DEFAULT_BINDINGS });
 
-  function updateBinding(action, combo) {
-    bindings = { ...bindings, [action]: combo };
+  function persistBindings(nextBindings) {
     try {
-      localStorage.setItem('cortex_mdt_hotkeys', JSON.stringify(bindings));
+      localStorage.setItem('cortex_mdt_hotkeys', JSON.stringify(nextBindings));
     } catch {}
   }
 
+  function updateBinding(action, combo) {
+    if (!(action in DEFAULT_BINDINGS)) return;
+
+    const nextBindings = {
+      ...bindings,
+      [action]: normalizeHotkeyBinding(combo, DEFAULT_BINDINGS[action]),
+    };
+
+    bindings = nextBindings;
+    persistBindings(nextBindings);
+  }
+
   function resetToDefaults() {
-    bindings = { ...DEFAULT_BINDINGS };
-    try {
-      localStorage.setItem('cortex_mdt_hotkeys', JSON.stringify(bindings));
-    } catch {}
+    const nextBindings = { ...DEFAULT_BINDINGS };
+    bindings = nextBindings;
+    persistBindings(nextBindings);
   }
 
   function loadFromStorage() {
@@ -44,7 +73,7 @@ function createHotkeysStore() {
       const saved = localStorage.getItem('cortex_mdt_hotkeys');
       if (saved) {
         const parsed = JSON.parse(saved);
-        bindings = { ...DEFAULT_BINDINGS, ...parsed };
+        bindings = sanitizeBindings(parsed);
       }
     } catch {}
   }

@@ -1,27 +1,88 @@
 <script>
-  import { Check, Fingerprint, ChevronRight } from 'lucide-svelte';
+  import { onMount } from 'svelte';
+  import { Check, Fingerprint, ChevronRight } from '@lucide/svelte';
   import { mdtStore } from '../lib/stores/mdt.svelte.js';
+  import { dataStore } from '../lib/stores/data.svelte.js';
+  import { playMdtSound } from '../lib/utils/mdtSounds.js';
   import { getDepartmentBrand } from '../lib/utils/branding.js';
+  import PortalRippleBackdrop from '../components/PortalRippleBackdrop.svelte';
+
+  const PASSWORD_LEN = 12;
+  const PASSWORD_TICK_MS = 95;
 
   let phase = $state('idle');
+  let biometricError = $state('');
+  let introComplete = $state(false);
+  let passwordGhost = $state('');
 
   let officer = $derived(mdtStore.officer);
   let brand = $derived(getDepartmentBrand(officer));
+  let isErsMode = $derived((officer?.frameworkMode || '').toLowerCase() === 'ers');
+  let officerDisplayName = $derived(
+    [officer?.firstName, officer?.lastName].filter(Boolean).join(' ').trim() || 'Unknown',
+  );
 
-  let officerId = $state('Unknown');
-  let password = $state('••••••••••••');
+  onMount(() => {
+    const filler = 'x'.repeat(PASSWORD_LEN);
+    let i = 0;
+    const id = setInterval(() => {
+      i += 1;
+      passwordGhost = filler.slice(0, i);
+      if (i >= PASSWORD_LEN) {
+        clearInterval(id);
+        introComplete = true;
+      }
+    }, PASSWORD_TICK_MS);
+    return () => clearInterval(id);
+  });
 
   async function handleBiometric() {
-    if (phase !== 'idle') return;
+    if (phase !== 'idle' || !introComplete) return;
+
+    biometricError = '';
     phase = 'scanning';
     await new Promise(r => setTimeout(r, 1800));
+
+    if (isErsMode) {
+      const ersResp = await dataStore.ersBiometricLogin();
+
+      if (!ersResp?.ok) {
+        phase = 'idle';
+        biometricError = ersResp?.error || 'Unable to authenticate with ERS biometrics.';
+        return;
+      }
+
+      if (ersResp?.officer) {
+        mdtStore.officer = ersResp.officer;
+      }
+    }
+
     phase = 'verified';
+    playMdtSound('biometric');
     await new Promise(r => setTimeout(r, 600));
+
     mdtStore.login();
+
+    const activeOfficer = mdtStore.officer;
+    const resp = await dataStore.registerOfficer({
+      firstName: activeOfficer.firstName,
+      lastName: activeOfficer.lastName,
+      rank: activeOfficer.rank,
+      callsign: activeOfficer.callsign,
+      departmentKey: activeOfficer.departmentKey,
+    });
+    if (resp?.ok && resp.officerId) {
+      mdtStore.officer = { ...mdtStore.officer, officerId: resp.officerId };
+    }
+    await Promise.all([
+      dataStore.fetchUnits(),
+      dataStore.fetchDashboard(),
+    ]);
   }
 </script>
 
 <div class="login-root">
+  <PortalRippleBackdrop layout="iso" seed={0x636f7274} />
   <!-- Terminal Modal -->
   <div class="terminal-modal">
     <!-- Header Section -->
@@ -39,7 +100,6 @@
       <div class="title-section">
         <div class="dept-pill font-mono">LOS SANTOS POLICE DEPARTMENT</div>
         <h1 class="main-title font-mono">CORTEX MDT</h1>
-        <h2 class="sub-title font-mono">SECURE TERMINAL ACCESS</h2>
       </div>
     </div>
 
@@ -51,26 +111,26 @@
       <div class="input-group">
         <label class="input-label" for="officer-id">OFFICER ID</label>
         <div class="input-wrapper">
-          <input 
-            id="officer-id" 
-            type="text" 
-            class="terminal-input" 
-            bind:value={officerId} 
+          <input
+            id="officer-id"
+            type="text"
+            class="terminal-input"
+            value={officerDisplayName}
             readonly
           />
-          <div class="badge-tag">#NO-CALLSIGN</div>
         </div>
       </div>
 
       <div class="input-group">
         <label class="input-label" for="password">PASSWORD</label>
         <div class="input-wrapper">
-          <input 
-            id="password" 
-            type="password" 
-            class="terminal-input" 
-            bind:value={password}
+          <input
+            id="password"
+            type="password"
+            class="terminal-input"
+            bind:value={passwordGhost}
             readonly
+            autocomplete="off"
           />
         </div>
       </div>
@@ -88,13 +148,20 @@
     </div>
     {/if}
 
+    {#if biometricError}
+    <div class="status-indicator status-indicator-error font-mono">
+      <span class="status-text text-error">{biometricError}</span>
+    </div>
+    {/if}
+
     <!-- Action Button -->
     <button
       class="action-btn font-mono"
+      class:action-btn--locked={!introComplete}
       class:scanning={phase === 'scanning'}
       class:verified={phase === 'verified'}
       onclick={handleBiometric}
-      disabled={phase !== 'idle'}
+      disabled={phase !== 'idle' || !introComplete}
     >
       <div class="btn-icon">
         {#if phase === 'verified'}
@@ -116,11 +183,6 @@
         <ChevronRight size={16} strokeWidth={2.1} />
       </div>
     </button>
-
-    <!-- Footer Section -->
-    <div class="modal-footer font-mono">
-      ENCRYPTED CONNECTION | CITY OF LOS SANTOS
-    </div>
   </div>
 </div>
 
@@ -157,7 +219,7 @@
     display: flex;
     flex-direction: column;
     width: calc(440px * var(--mdt-scale, 1));
-    background: rgba(10, 12, 16, 0.92);
+    background: rgba(28, 30, 38, 0.96);
     border: none;
     border-radius: calc(8px * var(--mdt-scale, 1));
     padding: calc(48px * var(--mdt-scale, 1)) calc(40px * var(--mdt-scale, 1)) calc(32px * var(--mdt-scale, 1));
@@ -223,14 +285,6 @@
     text-shadow: 0 0 20px rgba(255, 255, 255, 0.2);
   }
 
-  .sub-title {
-    font-size: calc(12px * var(--mdt-scale, 1));
-    color: var(--term-text-muted);
-    letter-spacing: 0.3em;
-    margin: 0;
-    opacity: 0.8;
-  }
-
   /* ── Divider ────────────────────────────────────── */
   .terminal-rule {
     width: 100%;
@@ -291,24 +345,12 @@
     letter-spacing: 0.1em;
     border-radius: calc(4px * var(--mdt-scale, 1));
     outline: none;
-    transition: all 0.2s ease;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
   }
 
   .terminal-input:focus {
     border-color: var(--term-accent);
     box-shadow: 0 0 15px var(--term-accent-dim) inset;
-  }
-
-  .badge-tag {
-    position: absolute;
-    right: calc(12px * var(--mdt-scale, 1));
-    background: rgba(52, 211, 153, 0.15);
-    color: #34d399;
-    border: 1px solid rgba(52, 211, 153, 0.3);
-    padding: calc(4px * var(--mdt-scale, 1)) calc(8px * var(--mdt-scale, 1));
-    font-size: calc(10px * var(--mdt-scale, 1));
-    border-radius: calc(4px * var(--mdt-scale, 1));
-    letter-spacing: 0.1em;
   }
 
   /* ── Status Indicator ───────────────────────────── */
@@ -353,6 +395,16 @@
 
   .text-scanning { color: var(--term-accent); animation: blink 0.5s infinite alternate; }
   .text-verified { color: #34d399; }
+  .status-indicator-error {
+    margin-top: calc(-6px * var(--mdt-scale, 1));
+    margin-bottom: calc(14px * var(--mdt-scale, 1));
+  }
+
+  .text-error {
+    color: #fca5a5;
+    letter-spacing: 0.08em;
+    text-align: center;
+  }
 
   /* ── Action Button ──────────────────────────────── */
   .action-btn {
@@ -366,9 +418,27 @@
     padding: calc(16px * var(--mdt-scale, 1)) calc(20px * var(--mdt-scale, 1));
     border-radius: calc(6px * var(--mdt-scale, 1));
     cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    transition:
+      background 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+      border-color 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+      color 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+      transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+      box-shadow 0.45s ease;
     position: relative;
     overflow: hidden;
+  }
+
+  .action-btn--locked {
+    background: rgba(55, 65, 81, 0.35);
+    border-color: rgba(75, 85, 99, 0.55);
+    color: #9ca3af;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  .action-btn--locked .btn-icon,
+  .action-btn--locked .btn-arrow {
+    color: #9ca3af;
   }
 
   .action-btn::before {
@@ -445,21 +515,5 @@
 
   .action-btn:hover:not(:disabled) .btn-arrow {
     transform: translateX(4px);
-  }
-
-  /* ── Footer ─────────────────────────────────────── */
-  .modal-footer {
-    margin-top: calc(40px * var(--mdt-scale, 1));
-    font-size: 0;
-    color: var(--term-text-muted);
-    text-align: center;
-    letter-spacing: 0.4em;
-    opacity: 0.4;
-    text-transform: uppercase;
-  }
-
-  .modal-footer::before {
-    content: 'ENCRYPTED CONNECTION • CITY OF LOS SANTOS';
-    font-size: calc(9px * var(--mdt-scale, 1));
   }
 </style>

@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+web/node_modules/
+
+# Lockfiles: keep bun.lock tracked; ignore package-lock.json because the project builds with Bun.
+# Ignore only bun's binary lock if present.
+bun.lockb
+package-lock.json
+web/package-lock.json
+
+# Build / temp artifacts
+tmp_*/
+tmp_*
+web/dist/
+*.map
+
+# Logs
+*.log
+vite-dev.log
+build-warnings.log
+build_reports_a11y.log
+
+# Runtime / local data (not source)
+data/localStorage.json
+
+# Windows reserved-name junk files
+nul
+**/nul
+
+# Accidental empty stubs from tooling
+/Citizens
+/Leaderboard
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Internal design / planning docs (keep README tracked)
+*.md
+!README.md

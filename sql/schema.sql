@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS `mdt_citizens` (
     `phone` VARCHAR(20) DEFAULT NULL,
     `mugshot` TEXT DEFAULT NULL,
     `fingerprint` VARCHAR(128) DEFAULT NULL,
+    `occupation` VARCHAR(64) DEFAULT NULL,
+    `properties` JSON DEFAULT '[]',
     `flags` JSON DEFAULT '[]',
     `notes` TEXT DEFAULT NULL,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -51,6 +53,18 @@ CREATE TABLE IF NOT EXISTS `mdt_citizen_licenses` (
     `issued_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `expires_at` TIMESTAMP NULL DEFAULT NULL,
     KEY `idx_citizen` (`citizen_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Citizen Tags
+CREATE TABLE IF NOT EXISTS `mdt_citizen_tags` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `citizen_id` VARCHAR(64) NOT NULL,
+    `label` VARCHAR(64) NOT NULL,
+    `color` VARCHAR(16) NOT NULL DEFAULT 'blue',
+    `created_by` INT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_citizen` (`citizen_id`),
+    UNIQUE KEY `uk_citizen_tag` (`citizen_id`, `label`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Vehicles
@@ -136,6 +150,60 @@ CREATE TABLE IF NOT EXISTS `mdt_report_entities` (
     KEY `idx_entity` (`entity_type`, `entity_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Structured Report Participants
+CREATE TABLE IF NOT EXISTS `mdt_report_participants` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `report_id` INT NOT NULL,
+    `participant_type` ENUM('suspect','victim','officer','witness','other') DEFAULT 'suspect',
+    `name` VARCHAR(128) NOT NULL,
+    `citizen_id` VARCHAR(64) DEFAULT NULL,
+    `officer_id` INT DEFAULT NULL,
+    `notes` TEXT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_report` (`report_id`),
+    KEY `idx_participant_type` (`participant_type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Structured Report Charges
+CREATE TABLE IF NOT EXISTS `mdt_report_charges` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `report_id` INT NOT NULL,
+    `charge` VARCHAR(128) NOT NULL,
+    `severity` ENUM('infraction','misdemeanor','felony') DEFAULT 'misdemeanor',
+    `count` INT DEFAULT 1,
+    `fine` INT DEFAULT 0,
+    `notes` TEXT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_report` (`report_id`),
+    KEY `idx_charge_severity` (`severity`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Issued citations generated from MDT reports
+CREATE TABLE IF NOT EXISTS `mdt_citations` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `citation_number` VARCHAR(32) NOT NULL,
+    `report_number` VARCHAR(32) DEFAULT NULL,
+    `report_id` INT DEFAULT NULL,
+    `report_title` VARCHAR(255) DEFAULT NULL,
+    `issued_to_citizen_id` VARCHAR(64) NOT NULL,
+    `issued_to_name` VARCHAR(128) NOT NULL,
+    `issued_by_callsign` VARCHAR(32) DEFAULT NULL,
+    `issued_by_name` VARCHAR(128) DEFAULT NULL,
+    `issued_by_rank` VARCHAR(64) DEFAULT NULL,
+    `issued_by_department` VARCHAR(128) DEFAULT NULL,
+    `issued_by_department_short` VARCHAR(16) DEFAULT NULL,
+    `charges` JSON NOT NULL,
+    `total_fine` INT DEFAULT 0,
+    `notes` TEXT DEFAULT NULL,
+    `status` ENUM('pending','viewed','paid','voided') DEFAULT 'pending',
+    `issued_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `issued_sort` BIGINT DEFAULT NULL,
+    UNIQUE KEY `uk_citation_number` (`citation_number`),
+    KEY `idx_citation_citizen` (`issued_to_citizen_id`),
+    KEY `idx_citation_report` (`report_id`),
+    KEY `idx_citation_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Report Collaborators (officers working on a report)
 CREATE TABLE IF NOT EXISTS `mdt_report_collaborators` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
@@ -189,6 +257,7 @@ CREATE TABLE IF NOT EXISTS `mdt_evidence` (
     `id` INT AUTO_INCREMENT PRIMARY KEY,
     `evidence_id` VARCHAR(32) NOT NULL,
     `type` VARCHAR(32) DEFAULT 'general',
+    `serial_number` VARCHAR(64) DEFAULT NULL,
     `description` TEXT NOT NULL,
     `photo_url` TEXT DEFAULT NULL,
     `stash_location` VARCHAR(64) DEFAULT NULL,
@@ -200,7 +269,8 @@ CREATE TABLE IF NOT EXISTS `mdt_evidence` (
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY `uk_evidence_id` (`evidence_id`),
     KEY `idx_report` (`report_id`),
-    KEY `idx_case` (`case_id`)
+    KEY `idx_case` (`case_id`),
+    KEY `idx_serial` (`serial_number`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Evidence Chain of Custody
@@ -215,6 +285,54 @@ CREATE TABLE IF NOT EXISTS `mdt_evidence_custody` (
     `notes` TEXT DEFAULT NULL,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     KEY `idx_evidence` (`evidence_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Attachment / file metadata
+CREATE TABLE IF NOT EXISTS `mdt_attachments` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `parent_type` ENUM('case','evidence','report') NOT NULL,
+    `parent_id` INT NOT NULL,
+    `file_name` VARCHAR(255) NOT NULL,
+    `file_url` TEXT NOT NULL,
+    `file_type` VARCHAR(64) DEFAULT NULL,
+    `uploaded_by` INT NOT NULL,
+    `notes` TEXT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_parent` (`parent_type`, `parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Weapons Registry
+CREATE TABLE IF NOT EXISTS `mdt_weapons` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `serial_number` VARCHAR(64) NOT NULL,
+    `owner_citizen_id` VARCHAR(64) DEFAULT NULL,
+    `owner_name` VARCHAR(128) DEFAULT NULL,
+    `weapon_type` VARCHAR(64) DEFAULT NULL,
+    `make` VARCHAR(64) DEFAULT NULL,
+    `model` VARCHAR(64) DEFAULT NULL,
+    `caliber` VARCHAR(32) DEFAULT NULL,
+    `status` ENUM('registered','flagged','seized','stolen','destroyed') DEFAULT 'registered',
+    `notes` TEXT DEFAULT NULL,
+    `image_url` TEXT DEFAULT NULL,
+    `registered_by` INT NOT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_weapon_serial` (`serial_number`),
+    KEY `idx_owner` (`owner_citizen_id`),
+    KEY `idx_weapon_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `mdt_weapon_history` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `weapon_id` INT NOT NULL,
+    `action` VARCHAR(32) NOT NULL,
+    `from_owner_citizen_id` VARCHAR(64) DEFAULT NULL,
+    `to_owner_citizen_id` VARCHAR(64) DEFAULT NULL,
+    `officer_id` INT NOT NULL,
+    `notes` TEXT DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    KEY `idx_weapon_history_weapon` (`weapon_id`),
+    KEY `idx_weapon_history_action` (`action`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- BOLOs
@@ -252,11 +370,14 @@ CREATE TABLE IF NOT EXISTS `mdt_warrants` (
     `status` ENUM('pending','active','served','expired','recalled') DEFAULT 'pending',
     `report_id` INT DEFAULT NULL,
     `bolo_id` INT DEFAULT NULL,
+    `served_by` INT DEFAULT NULL,
+    `served_at` TIMESTAMP NULL DEFAULT NULL,
     `expires_at` TIMESTAMP NULL DEFAULT NULL,
     `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     KEY `idx_citizen` (`citizen_id`),
-    KEY `idx_status` (`status`)
+    KEY `idx_status` (`status`),
+    KEY `idx_served_by` (`served_by`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Active Units (real-time state, frequently updated)
@@ -265,10 +386,30 @@ CREATE TABLE IF NOT EXISTS `mdt_units` (
     `callsign` VARCHAR(16) NOT NULL,
     `officer_id` INT NOT NULL,
     `department` VARCHAR(32) DEFAULT 'police',
-    `status` ENUM('available','busy','enroute','scene','off_duty') DEFAULT 'available',
+    `status` ENUM('available','busy','enroute','scene','en_route','on_scene','emergency','off_duty') DEFAULT 'available',
     `assignment` VARCHAR(255) DEFAULT NULL,
     `last_updated` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY `uk_officer` (`officer_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- CCTV Cameras
+CREATE TABLE IF NOT EXISTS `mdt_cameras` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `cam_id` VARCHAR(64) NOT NULL,
+    `cam_label` VARCHAR(128) NOT NULL,
+    `cam_type` ENUM('placed','dynamic','store','bank','jewelry','government','medical','other') DEFAULT 'placed',
+    `model` VARCHAR(64) NOT NULL DEFAULT 'security_cam_03',
+    `coords` JSON NOT NULL,
+    `rotation` JSON NOT NULL,
+    `image` TEXT DEFAULT NULL,
+    `can_rotate` TINYINT(1) DEFAULT 1,
+    `is_online` TINYINT(1) DEFAULT 1,
+    `spawns_model` TINYINT(1) DEFAULT 1,
+    `created_by` VARCHAR(128) DEFAULT NULL,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_cam_id` (`cam_id`),
+    KEY `idx_cam_online` (`is_online`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- MOTD / Announcements
@@ -307,12 +448,29 @@ CREATE TABLE IF NOT EXISTS `mdt_settings` (
     `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- License Type Catalog (admin-configured types available for citizen assignment)
+CREATE TABLE IF NOT EXISTS `mdt_license_types` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `type_id` VARCHAR(64) NOT NULL,
+    `name` VARCHAR(128) NOT NULL,
+    `description` TEXT DEFAULT NULL,
+    `active` TINYINT(1) DEFAULT 1,
+    `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    `updated_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `uk_type_id` (`type_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- Default settings
 INSERT IGNORE INTO `mdt_settings` (`key`, `value`) VALUES
-    ('motd', 'Welcome to the Cortex MDT. Stay safe out there.'),
+    ('motd', ''),
     ('case_prefix', 'CASE'),
     ('report_prefix', 'RPT'),
     ('evidence_prefix', 'EV'),
+    ('weapon_prefix', 'WPN'),
     ('retention_misdemeanor_days', '60'),
     ('retention_felony_days', '0'),
     ('cross_dept_reports', 'false');
+
+ALTER TABLE `mdt_citizens`
+    ADD COLUMN IF NOT EXISTS `job_title` VARCHAR(96) DEFAULT NULL AFTER `phone`,
+    ADD COLUMN IF NOT EXISTS `property_count` INT DEFAULT 0 AFTER `job_title`;

@@ -1,20 +1,37 @@
 <script>
   import { onMount } from 'svelte';
   import { isEnvBrowser } from '../lib/utils/nui.js';
-  import { FileText, AlertTriangle, Clock, Check, Scale } from 'lucide-svelte';
+  import { mdtStore } from '../lib/stores/mdt.svelte.js';
+  import { dataStore } from '../lib/stores/data.svelte.js';
+  import { FileText, AlertTriangle, Clock, Check, Scale } from '@lucide/svelte';
 
   let mounted = $state(false);
   let records = $state([]);
 
-  onMount(() => {
+  const MOCK_RECORDS = [
+    { id: 1, type: 'citation', title: 'Traffic Violation — Speeding', date: '2026-03-18', status: 'unpaid', amount: '$350', officer: 'Ofc. Rivera', badge: '1-A-14' },
+    { id: 2, type: 'citation', title: 'Expired Registration', date: '2026-02-05', status: 'paid', amount: '$150', officer: 'Ofc. Chen', badge: '2-L-07' },
+    { id: 3, type: 'warrant', title: 'Bench Warrant — FTA', date: '2026-01-12', status: 'active', amount: null, officer: 'Det. Nakamura', badge: 'D-42' },
+    { id: 4, type: 'arrest', title: 'Arrest — Reckless Driving', date: '2025-11-20', status: 'resolved', amount: null, officer: 'Sgt. Williams', badge: '1-S-03' },
+  ];
+
+  onMount(async () => {
     mounted = true;
     if (isEnvBrowser()) {
-      records = [
-        { id: 1, type: 'citation', title: 'Traffic Violation — Speeding', date: '2026-03-18', status: 'unpaid', amount: '$350', officer: 'Ofc. Rivera', badge: '1-A-14' },
-        { id: 2, type: 'citation', title: 'Expired Registration', date: '2026-02-05', status: 'paid', amount: '$150', officer: 'Ofc. Chen', badge: '2-L-07' },
-        { id: 3, type: 'warrant', title: 'Bench Warrant — FTA', date: '2026-01-12', status: 'active', amount: null, officer: 'Det. Nakamura', badge: 'D-42' },
-        { id: 4, type: 'arrest', title: 'Arrest — Reckless Driving', date: '2025-11-20', status: 'resolved', amount: null, officer: 'Sgt. Williams', badge: '1-S-03' },
-      ];
+      records = MOCK_RECORDS;
+    } else {
+      const citizenId = mdtStore.civilian?.citizenId;
+      if (citizenId) {
+        const resp = await dataStore.fetchCivilianRecords(citizenId);
+        if (resp?.ok && resp.records) {
+          const combined = [
+            ...(resp.records.citations || []).map(r => ({ ...r, type: 'citation' })),
+            ...(resp.records.warrants || []).map(r => ({ ...r, type: 'warrant' })),
+            ...(resp.records.arrests || []).map(r => ({ ...r, type: 'arrest' })),
+          ];
+          records = combined.sort((a, b) => new Date(b.date || b.created_at || 0) - new Date(a.date || a.created_at || 0));
+        }
+      }
     }
   });
 
@@ -39,13 +56,13 @@
   function typeColor(type) {
     if (type === 'warrant') return 'var(--mdt-error)';
     if (type === 'arrest') return 'var(--mdt-warning)';
-    return 'var(--civ-gold, var(--mdt-accent))';
+    return 'var(--mdt-accent)';
   }
 
   function typeBg(type) {
     if (type === 'warrant') return 'rgba(248, 113, 113, 0.1)';
     if (type === 'arrest') return 'rgba(251, 191, 36, 0.1)';
-    return 'var(--civ-accent-dim, var(--mdt-accent-dim))';
+    return 'var(--mdt-accent-dim)';
   }
 </script>
 
@@ -124,7 +141,7 @@
   .page-title {
     font-size: calc(20px * var(--mdt-scale));
     font-weight: 700;
-    color: var(--civ-cream, var(--mdt-text));
+    color: var(--mdt-text);
     letter-spacing: -0.01em;
   }
 
@@ -132,6 +149,7 @@
     font-size: calc(11px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     letter-spacing: 0.06em;
+    font-variant-numeric: tabular-nums;
     text-transform: uppercase;
   }
 
@@ -147,7 +165,7 @@
     gap: calc(14px * var(--mdt-scale));
     padding: calc(14px * var(--mdt-scale)) calc(18px * var(--mdt-scale));
     background: var(--mdt-surface);
-    border: 1px solid var(--civ-border, var(--mdt-border));
+    border: 1px solid var(--mdt-border);
     border-radius: var(--mdt-radius);
     animation: cardIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     animation-delay: calc(var(--stagger) * 60ms);

@@ -1,5 +1,5 @@
 <script>
-  import { X, Plus, Pin, PinOff, Copy, ArrowRight, XCircle, RotateCcw } from 'lucide-svelte';
+  import { X, Plus, Pin, PinOff, Copy, ArrowRight, XCircle, RotateCcw } from '@lucide/svelte';
   import { tabsStore } from '../stores/tabs.svelte.js';
 
   let tabs = $derived(tabsStore.tabs);
@@ -156,15 +156,15 @@
           {/if}
         </button>
       {/each}
-    </div>
 
-    <button
-      class="tab-new"
-      onclick={handleNewTab}
-      title="New Tab"
-    >
-      <Plus size="100%" />
-    </button>
+      <button
+        class="tab-new"
+        onclick={handleNewTab}
+        title="New Tab"
+      >
+        <Plus size="100%" />
+      </button>
+    </div>
   </div>
 
   <div class="tab-bar-border"></div>
@@ -253,6 +253,7 @@
   }
 
   .tab-bar-border {
+    flex-shrink: 0;
     height: calc(1px * var(--mdt-scale));
     background: var(--mdt-border);
   }
@@ -409,7 +410,7 @@
   }
 
   .tab-new:active {
-    transform: scale(0.93);
+    transform: scale(0.96);
   }
 
   /* ─── Context Menu ─── */

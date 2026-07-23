@@ -3,11 +3,37 @@
   import { dataStore } from '../lib/stores/data.svelte.js';
   import { mdtStore } from '../lib/stores/mdt.svelte.js';
   import { isEnvBrowser } from '../lib/utils/nui.js';
+  import {
+    Plus,
+    Search,
+    User,
+    Car,
+    Swords,
+    ChevronDown,
+    Check,
+    X,
+    FileText,
+    Shield,
+    Clock,
+  } from '@lucide/svelte';
 
+  /** Category stripes: muted tints (semantic, not competing with --mdt-accent) */
   const TYPE_CONFIG = {
-    person: { label: 'Person', color: '#3b82f6', border: '#3b82f6' },
-    vehicle: { label: 'Vehicle', color: '#f59e0b', border: '#f59e0b' },
-    weapon: { label: 'Weapon', color: '#ef4444', border: '#ef4444' },
+    person: {
+      label: 'Person',
+      stripe: 'rgba(110, 168, 178, 0.55)',
+      tone: 'rgba(110, 168, 178, 0.9)',
+    },
+    vehicle: {
+      label: 'Vehicle',
+      stripe: 'rgba(196, 154, 82, 0.55)',
+      tone: 'rgba(196, 154, 82, 0.9)',
+    },
+    weapon: {
+      label: 'Weapon',
+      stripe: 'rgba(188, 108, 106, 0.55)',
+      tone: 'rgba(188, 108, 106, 0.9)',
+    },
   };
 
   const STATUS_CONFIG = {
@@ -24,12 +50,21 @@
     { id: 5, type: 'vehicle', title: 'White Burrito Van — Suspicious Activity', description: 'White Declasse Burrito van with no plates observed circling Maze Bank Tower. Possibly conducting surveillance for planned robbery.', citizen_id: null, plate: 'NO PLATE', vehicle_description: 'White Declasse Burrito, no visible plates, dented rear panel', weapon_description: null, photo_url: '', status: 'cancelled', issued_by: 'Ofc. Park', department: 'BCSO', report_id: null, created_at: '2026-03-14T16:20:00Z', officer_first: 'Jisoo', officer_last: 'Park' },
   ];
 
+  const TYPE_CHIPS = [
+    { key: 'all', label: 'All types' },
+    { key: 'person', label: 'Person' },
+    { key: 'vehicle', label: 'Vehicle' },
+    { key: 'weapon', label: 'Weapon' },
+  ];
+
   let mode = $state('list');
   let activeFilter = $state('active');
+  let typeFilter = $state('all');
   let searchQuery = $state('');
   let loading = $state(false);
   let saving = $state(false);
   let mounted = $state(false);
+  let expandedId = $state(null);
 
   let createType = $state('person');
   let createTitle = $state('');
@@ -44,16 +79,23 @@
   let bolos = $derived(dataStore.bolosList || []);
   let officer = $derived(mdtStore.officer);
 
-  let filteredBolos = $derived(() => {
-    if (!searchQuery.trim()) return bolos;
+  let filteredBolos = $derived.by(() => {
+    let list = bolos;
+    if (typeFilter !== 'all') {
+      list = list.filter(b => b.type === typeFilter);
+    }
+    if (!searchQuery.trim()) return list;
     const q = searchQuery.toLowerCase();
-    return bolos.filter(b =>
-      (b.title && b.title.toLowerCase().includes(q)) ||
-      (b.description && b.description.toLowerCase().includes(q)) ||
-      (b.plate && b.plate.toLowerCase().includes(q)) ||
-      (b.issued_by && b.issued_by.toLowerCase().includes(q))
+    return list.filter(
+      b =>
+        (b.title && b.title.toLowerCase().includes(q)) ||
+        (b.description && b.description.toLowerCase().includes(q)) ||
+        (b.plate && b.plate.toLowerCase().includes(q)) ||
+        (b.issued_by && b.issued_by.toLowerCase().includes(q))
     );
   });
+
+  let activeOpenCount = $derived(bolos.filter(b => b.status === 'active').length);
 
   function getTypeConfig(type) {
     return TYPE_CONFIG[type] || TYPE_CONFIG.person;
@@ -73,6 +115,10 @@
     }
   }
 
+  function toggleExpand(id) {
+    expandedId = expandedId === id ? null : id;
+  }
+
   async function loadBolos() {
     loading = true;
     if (isEnvBrowser()) {
@@ -89,6 +135,7 @@
 
   function switchFilter(filter) {
     activeFilter = filter;
+    expandedId = null;
     loadBolos();
   }
 
@@ -112,7 +159,7 @@
   async function handleCreate() {
     if (!createTitle.trim()) return;
     saving = true;
-    const resp = await dataStore.createBolo({
+    await dataStore.createBolo({
       type: createType,
       title: createTitle.trim(),
       description: createDescription.trim(),
@@ -151,19 +198,19 @@
     }
   }
 
-  async function handleStatusChange(boloId, newStatus) {
+  async function handleStatusChange(boloId, newStatus, e) {
+    e?.stopPropagation?.();
     saving = true;
     await dataStore.updateBoloStatus(boloId, newStatus);
     if (isEnvBrowser()) {
-      dataStore.bolosList = bolos.map(b =>
-        b.id === boloId ? { ...b, status: newStatus } : b
-      );
+      dataStore.bolosList = bolos.map(b => (b.id === boloId ? { ...b, status: newStatus } : b));
       if (activeFilter === 'active') {
         dataStore.bolosList = dataStore.bolosList.filter(b => b.status === 'active');
       }
     } else {
       await loadBolos();
     }
+    expandedId = null;
     saving = false;
   }
 
@@ -176,155 +223,240 @@
 <div class="bolos-page" class:mounted>
   {#if mode === 'list'}
     <div class="list-mode">
-      <div class="page-header">
-        <div class="header-left">
-          <h2 class="page-title">BOLOs</h2>
-          <p class="page-subtitle">Be On the Lookout — active alerts and bulletins</p>
+      <header class="masthead">
+        <div class="masthead-copy">
+          <p class="masthead-kicker">Field bulletin board</p>
+          <h2 class="masthead-title">BOLOs</h2>
+          <p class="masthead-sub">Be On the Lookout — tap a row for full detail and disposition.</p>
         </div>
-        <button class="btn-new" onclick={openCreate}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
+        <button type="button" class="btn-new" onclick={openCreate}>
+          <Plus size={16} strokeWidth={2} aria-hidden="true" />
           <span>New BOLO</span>
         </button>
-      </div>
+      </header>
 
-      <div class="controls-bar">
-        <div class="filter-bar">
-          {#each [['active', 'Active'], ['all', 'All']] as [key, label]}
-            <button
-              class="filter-tab"
-              class:active={activeFilter === key}
-              onclick={() => switchFilter(key)}
-            >{label}</button>
-          {/each}
-        </div>
-        <div class="search-wrapper">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-          </svg>
-          <input
-            type="text"
-            class="search-input"
-            placeholder="Search BOLOs..."
-            bind:value={searchQuery}
-          />
-        </div>
-      </div>
-
-      {#if loading}
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <p class="loading-text">Loading BOLOs...</p>
-        </div>
-      {:else if filteredBolos().length > 0}
-        <div class="cards-grid">
-          {#each filteredBolos() as bolo, i (bolo.id)}
-            {@const typeConf = getTypeConfig(bolo.type)}
-            {@const statusConf = getStatusConfig(bolo.status)}
-            {@const isActive = bolo.status === 'active'}
-            <div
-              class="bolo-card"
-              class:dimmed={!isActive}
-              class:glow={isActive}
-              style="
-                --card-border-color: {typeConf.border};
-                --card-delay: {i * 0.04}s;
-              "
-            >
-              <div class="card-left-border"></div>
-              <div class="card-content">
-                <div class="card-top-row">
-                  <div class="card-badges">
-                    <span class="type-badge" style="--type-color: {typeConf.color}">{typeConf.label}</span>
-                    <span class="status-badge" style="--status-color: {statusConf.color}">{statusConf.label}</span>
-                  </div>
-                  <span class="card-date font-mono">{formatDate(bolo.created_at)}</span>
-                </div>
-
-                <h3 class="card-title">{bolo.title}</h3>
-                <p class="card-desc">{bolo.description || '\u2014'}</p>
-
-                {#if bolo.type === 'vehicle' && bolo.plate}
-                  <div class="card-plate">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <rect x="1" y="6" width="22" height="12" rx="2" ry="2" />
-                      <path d="M1 10h22" />
-                    </svg>
-                    <span class="font-mono">{bolo.plate}</span>
-                  </div>
-                {/if}
-
-                <div class="card-meta">
-                  <div class="meta-item">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                      <circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 00-16 0" />
-                    </svg>
-                    <span>{bolo.officer_first ? `${bolo.officer_first} ${bolo.officer_last}` : (typeof bolo.issued_by === 'string' ? bolo.issued_by : '\u2014')}</span>
-                  </div>
-                  {#if bolo.department}
-                    <div class="meta-item">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M3 21h18M9 8h1M9 12h1M9 16h1M14 8h1M14 12h1M14 16h1M5 21V5a2 2 0 012-2h10a2 2 0 012 2v16" />
-                      </svg>
-                      <span>{bolo.department}</span>
-                    </div>
-                  {/if}
-                  {#if bolo.report_id}
-                    <div class="meta-item meta-report">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
-                      </svg>
-                      <span class="font-mono">{bolo.report_id}</span>
-                    </div>
-                  {/if}
-                </div>
-
-                {#if isActive}
-                  <div class="card-actions">
-                    <button
-                      class="action-btn resolve-btn"
-                      onclick={() => handleStatusChange(bolo.id, 'resolved')}
-                      disabled={saving}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      <span>Resolve</span>
-                    </button>
-                    <button
-                      class="action-btn cancel-btn"
-                      onclick={() => handleStatusChange(bolo.id, 'cancelled')}
-                      disabled={saving}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 6L6 18M6 6l12 12" />
-                      </svg>
-                      <span>Cancel</span>
-                    </button>
-                  </div>
-                {/if}
-              </div>
+      <div class="workspace">
+        <aside class="rail" aria-label="Filters and summary">
+          <div class="rail-stat">
+            <span class="rail-stat-label">Open active</span>
+            <div class="rail-stat-value-row">
+              <span class="rail-stat-num font-mono">{activeOpenCount}</span>
+              {#if activeFilter === 'active' && activeOpenCount > 0}
+                <span class="live-mark" aria-hidden="true"></span>
+              {/if}
             </div>
-          {/each}
-        </div>
-      {:else}
-        <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-            <line x1="12" y1="9" x2="12" y2="13" />
-            <line x1="12" y1="17" x2="12.01" y2="17" />
-          </svg>
-          <p class="empty-text">No BOLOs found</p>
-          <p class="empty-sub">{searchQuery.trim() ? 'Try adjusting your search query' : 'Create a new BOLO to get started'}</p>
-        </div>
-      {/if}
-    </div>
+          </div>
 
+          <div class="rail-block">
+            <span class="rail-label">Scope</span>
+            <div class="tab-row" role="tablist" aria-label="List scope">
+              {#each [['active', 'Active'], ['all', 'All']] as [key, label], idx}
+                {#if idx > 0}<span class="tab-div" aria-hidden="true"></span>{/if}
+                <button
+                  type="button"
+                  role="tab"
+                  class="tab-link"
+                  aria-selected={activeFilter === key}
+                  class:selected={activeFilter === key}
+                  onclick={() => switchFilter(key)}
+                >{label}</button>
+              {/each}
+            </div>
+          </div>
+
+          <div class="rail-block">
+            <span class="rail-label">Type</span>
+            <nav class="type-nav" aria-label="Filter by type">
+              {#each TYPE_CHIPS as chip}
+                <button
+                  type="button"
+                  class="type-nav-item"
+                  class:selected={typeFilter === chip.key}
+                  onclick={() => {
+                    typeFilter = chip.key;
+                    expandedId = null;
+                  }}
+                >{chip.label}</button>
+              {/each}
+            </nav>
+          </div>
+
+          <div class="rail-hint">
+            <span class="font-mono">{filteredBolos.length}</span> shown
+            {#if typeFilter !== 'all' || searchQuery.trim()}
+              <span class="rail-hint-muted">after filters</span>
+            {/if}
+          </div>
+        </aside>
+
+        <section class="main-col" aria-label="BOLO list">
+          <div class="search-row">
+            <label class="search-wrap" for="bolo-search">
+              <Search class="search-ic" size={16} strokeWidth={2} aria-hidden="true" />
+              <input
+                id="bolo-search"
+                type="search"
+                class="search-input"
+                placeholder="Search title, plate, officer, description..."
+                bind:value={searchQuery}
+                autocomplete="off"
+              />
+            </label>
+          </div>
+
+          {#if loading}
+            <div class="skeleton-stack" aria-busy="true" aria-label="Loading">
+              {#each [1, 2, 3, 4] as row (row)}
+                <div class="sk-row" style="--sk-delay: {(row - 1) * 0.07}s">
+                  <div class="sk-stripe"></div>
+                  <div class="sk-body">
+                    <div class="sk-line sk-w-40"></div>
+                    <div class="sk-line sk-w-70"></div>
+                    <div class="sk-line sk-w-55"></div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {:else if filteredBolos.length > 0}
+            <ul class="feed" role="list">
+              {#each filteredBolos as bolo, i (bolo.id)}
+                {@const typeConf = getTypeConfig(bolo.type)}
+                {@const statusConf = getStatusConfig(bolo.status)}
+                {@const isActive = bolo.status === 'active'}
+                {@const open = expandedId === bolo.id}
+                {@const stagger = i * 0.045}
+                <li
+                  class="feed-item"
+                  style="--stripe: {typeConf.stripe}; --type-tone: {typeConf.tone}; --st: {statusConf.color}; --enter-delay: {stagger}s;"
+                >
+                  <article class="dossier" class:open class:inactive={!isActive}>
+                    <button
+                      type="button"
+                      class="dossier-hit"
+                      onclick={() => toggleExpand(bolo.id)}
+                      aria-expanded={open}
+                    >
+                      <span class="dossier-stripe" aria-hidden="true"></span>
+                      <span class="dossier-main">
+                        <span class="dossier-top">
+                          <span class="type-ic" aria-hidden="true">
+                            {#if bolo.type === 'vehicle'}
+                              <Car size={15} strokeWidth={1.75} />
+                            {:else if bolo.type === 'weapon'}
+                              <Swords size={15} strokeWidth={1.75} />
+                            {:else}
+                              <User size={15} strokeWidth={1.75} />
+                            {/if}
+                          </span>
+                          <span class="type-label font-mono">{typeConf.label}</span>
+                          <span class="meta-sep" aria-hidden="true"></span>
+                          <span class="status-inline">
+                            <span class="status-dot" aria-hidden="true"></span>
+                            {statusConf.label}
+                          </span>
+                          <span class="dossier-time font-mono">
+                            <Clock size={12} strokeWidth={1.75} class="time-ic" aria-hidden="true" />
+                            {formatDate(bolo.created_at)}
+                          </span>
+                          <ChevronDown class="chev" size={16} strokeWidth={2} aria-hidden="true" />
+                        </span>
+                        <h3 class="dossier-title">{bolo.title}</h3>
+                        <p class="dossier-preview" class:clamp={!open}>{bolo.description || '\u2014'}</p>
+                      </span>
+                    </button>
+
+                    {#if open}
+                      <div class="dossier-drawer">
+                        {#if bolo.type === 'vehicle' && bolo.plate}
+                          <div class="plate-inline">
+                            <span class="plate-label font-mono">Plate</span>
+                            <span class="plate-val font-mono">{bolo.plate}</span>
+                          </div>
+                        {/if}
+
+                        <div class="meta-grid">
+                          <div class="meta-cell">
+                            <span class="meta-lbl">Issued by</span>
+                            <span class="meta-val">{bolo.officer_first ? `${bolo.officer_first} ${bolo.officer_last}` : (typeof bolo.issued_by === 'string' ? bolo.issued_by : '\u2014')}</span>
+                          </div>
+                          {#if bolo.department}
+                            <div class="meta-cell">
+                              <span class="meta-lbl">Dept</span>
+                              <span class="meta-val"><Shield size={12} strokeWidth={1.75} class="meta-ic" aria-hidden="true" />{bolo.department}</span>
+                            </div>
+                          {/if}
+                          {#if bolo.report_id}
+                            <div class="meta-cell meta-span">
+                              <span class="meta-lbl">Report</span>
+                              <span class="meta-val font-mono"><FileText size={12} strokeWidth={1.75} class="meta-ic" aria-hidden="true" />{bolo.report_id}</span>
+                            </div>
+                          {/if}
+                        </div>
+
+                        {#if isActive}
+                          <div class="drawer-actions">
+                            <button
+                              type="button"
+                              class="btn-resolve"
+                              disabled={saving}
+                              onclick={e => handleStatusChange(bolo.id, 'resolved', e)}
+                            >
+                              <Check size={14} strokeWidth={2} aria-hidden="true" />
+                              Resolve
+                            </button>
+                            <button
+                              type="button"
+                              class="btn-cancel-bolo"
+                              disabled={saving}
+                              onclick={e => handleStatusChange(bolo.id, 'cancelled', e)}
+                            >
+                              <X size={14} strokeWidth={2} aria-hidden="true" />
+                              Cancel
+                            </button>
+                          </div>
+                        {/if}
+                      </div>
+                    {:else if isActive}
+                      <div class="quick-actions" aria-hidden="true">
+                        <span class="quick-hint">Open row for actions</span>
+                      </div>
+                    {/if}
+                  </article>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <div class="empty-state">
+              <div class="empty-visual" aria-hidden="true"></div>
+              <p class="empty-title">No BOLOs in this view</p>
+              <p class="empty-sub">
+                {#if searchQuery.trim() || typeFilter !== 'all'}
+                  Widen scope to All, clear search, or pick another type.
+                {:else}
+                  Issue a bulletin from New BOLO when you have suspect or asset data.
+                {/if}
+              </p>
+              {#if searchQuery.trim() || typeFilter !== 'all'}
+                <button
+                  type="button"
+                  class="empty-reset"
+                  onclick={() => {
+                    searchQuery = '';
+                    typeFilter = 'all';
+                  }}
+                >Reset filters</button>
+              {:else}
+                <button type="button" class="empty-reset" onclick={openCreate}>New BOLO</button>
+              {/if}
+            </div>
+          {/if}
+        </section>
+      </div>
+    </div>
   {:else if mode === 'create'}
     <div class="create-mode">
-      <button class="back-btn" onclick={cancelCreate}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <button type="button" class="back-btn" onclick={cancelCreate}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
           <path d="M19 12H5M12 19l-7-7 7-7" />
         </svg>
         <span>Back to BOLOs</span>
@@ -332,30 +464,29 @@
 
       <h2 class="section-title">Create BOLO</h2>
 
-      <div class="form-card">
-        <div class="form-group">
-          <label class="form-label">Type</label>
-          <div class="type-selector">
-            {#each [['person', 'Person'], ['vehicle', 'Vehicle'], ['weapon', 'Weapon']] as [key, label]}
-              {@const conf = getTypeConfig(key)}
+      <div class="create-form">
+        <div class="form-section">
+          <label class="form-label" for="bolo-type">Type</label>
+          <div class="type-tabs" id="bolo-type" role="tablist">
+            {#each [['person', 'Person'], ['vehicle', 'Vehicle'], ['weapon', 'Weapon']] as [key, label], ti}
+              {#if ti > 0}<span class="type-tabs-div" aria-hidden="true"></span>{/if}
               <button
-                class="type-option"
-                class:active={createType === key}
-                style="--type-opt-color: {conf.color}"
-                onclick={() => { createType = key; }}
+                type="button"
+                role="tab"
+                class="type-tab"
+                aria-selected={createType === key}
+                class:selected={createType === key}
+                style="--type-tab-tone: {getTypeConfig(key).tone}"
+                onclick={() => {
+                  createType = key;
+                }}
               >
                 {#if key === 'person'}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="8" r="4" /><path d="M20 21a8 8 0 00-16 0" />
-                  </svg>
+                  <User size={16} strokeWidth={2} aria-hidden="true" />
                 {:else if key === 'vehicle'}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M5 17h14M5 17a2 2 0 01-2-2V9a2 2 0 012-2h1l2-3h8l2 3h1a2 2 0 012 2v6a2 2 0 01-2 2M5 17v2m14-2v2" />
-                  </svg>
+                  <Car size={16} strokeWidth={2} aria-hidden="true" />
                 {:else}
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 22H2l4-12 3.5 3.5L14 2l4.5 11.5L22 10l-4 12h-4z" />
-                  </svg>
+                  <Swords size={16} strokeWidth={2} aria-hidden="true" />
                 {/if}
                 <span>{label}</span>
               </button>
@@ -363,9 +494,10 @@
           </div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Title <span class="required">*</span></label>
+        <div class="form-section form-group">
+          <label class="form-label" for="bolo-title">Title <span class="required">*</span></label>
           <input
+            id="bolo-title"
             type="text"
             class="form-input"
             placeholder="Brief descriptive title for this BOLO..."
@@ -373,9 +505,10 @@
           />
         </div>
 
-        <div class="form-group">
-          <label class="form-label">Description</label>
+        <div class="form-section form-group">
+          <label class="form-label" for="bolo-desc">Description</label>
           <textarea
+            id="bolo-desc"
             class="form-textarea"
             placeholder="Detailed description — include physical characteristics, last known location, circumstances..."
             bind:value={createDescription}
@@ -384,10 +517,11 @@
         </div>
 
         {#if createType === 'person'}
-          <div class="form-row">
+          <div class="form-section form-row">
             <div class="form-group form-group-half">
-              <label class="form-label">Citizen ID</label>
+              <label class="form-label" for="bolo-cit">Citizen ID</label>
               <input
+                id="bolo-cit"
                 type="text"
                 class="form-input font-mono"
                 placeholder="CIT-00000000-0000"
@@ -395,8 +529,9 @@
               />
             </div>
             <div class="form-group form-group-half">
-              <label class="form-label">Photo URL</label>
+              <label class="form-label" for="bolo-photo-p">Photo URL</label>
               <input
+                id="bolo-photo-p"
                 type="text"
                 class="form-input"
                 placeholder="https://example.com/photo.png"
@@ -405,10 +540,11 @@
             </div>
           </div>
         {:else if createType === 'vehicle'}
-          <div class="form-row">
+          <div class="form-section form-row">
             <div class="form-group form-group-half">
-              <label class="form-label">License Plate</label>
+              <label class="form-label" for="bolo-plate">License Plate</label>
               <input
+                id="bolo-plate"
                 type="text"
                 class="form-input font-mono"
                 placeholder="e.g. 59CKN843"
@@ -416,8 +552,9 @@
               />
             </div>
             <div class="form-group form-group-half">
-              <label class="form-label">Photo URL</label>
+              <label class="form-label" for="bolo-photo-v">Photo URL</label>
               <input
+                id="bolo-photo-v"
                 type="text"
                 class="form-input"
                 placeholder="https://example.com/photo.png"
@@ -425,9 +562,10 @@
               />
             </div>
           </div>
-          <div class="form-group">
-            <label class="form-label">Vehicle Description</label>
+          <div class="form-section form-group">
+            <label class="form-label" for="bolo-veh-desc">Vehicle Description</label>
             <textarea
+              id="bolo-veh-desc"
               class="form-textarea form-textarea-sm"
               placeholder="Make, model, color, modifications, damage..."
               bind:value={createVehicleDesc}
@@ -435,18 +573,20 @@
             ></textarea>
           </div>
         {:else if createType === 'weapon'}
-          <div class="form-group">
-            <label class="form-label">Weapon Description</label>
+          <div class="form-section form-group">
+            <label class="form-label" for="bolo-wpn">Weapon Description</label>
             <textarea
+              id="bolo-wpn"
               class="form-textarea form-textarea-sm"
               placeholder="Weapon type, serial number, distinguishing marks..."
               bind:value={createWeaponDesc}
               rows="3"
             ></textarea>
           </div>
-          <div class="form-group">
-            <label class="form-label">Photo URL</label>
+          <div class="form-section form-group">
+            <label class="form-label" for="bolo-photo-w">Photo URL</label>
             <input
+              id="bolo-photo-w"
               type="text"
               class="form-input"
               placeholder="https://example.com/photo.png"
@@ -456,7 +596,7 @@
         {/if}
 
         {#if createPhotoUrl.trim()}
-          <div class="photo-preview-box">
+          <div class="form-section photo-preview-box">
             <span class="form-label">Photo Preview</span>
             <div class="photo-preview-frame">
               <img src={createPhotoUrl} alt="BOLO preview" class="photo-preview-img" />
@@ -464,9 +604,10 @@
           </div>
         {/if}
 
-        <div class="form-group">
-          <label class="form-label">Linked Report ID</label>
+        <div class="form-section form-group">
+          <label class="form-label" for="bolo-rpt">Linked Report ID</label>
           <input
+            id="bolo-rpt"
             type="text"
             class="form-input font-mono"
             placeholder="RPT-00000000-0000"
@@ -474,9 +615,10 @@
           />
         </div>
 
-        <div class="form-actions">
-          <button class="btn-cancel" onclick={cancelCreate}>Cancel</button>
+        <div class="form-section form-actions">
+          <button type="button" class="btn-cancel" onclick={cancelCreate}>Cancel</button>
           <button
+            type="button"
             class="btn-primary"
             onclick={handleCreate}
             disabled={!createTitle.trim() || saving}
@@ -491,17 +633,18 @@
 
 <style>
   .bolos-page {
-    padding: calc(24px * var(--mdt-scale));
+    padding: calc(22px * var(--mdt-scale));
     display: flex;
     flex-direction: column;
-    gap: calc(20px * var(--mdt-scale));
+    gap: calc(18px * var(--mdt-scale));
     height: 100%;
+    min-height: 0;
     opacity: 0;
-    transform: translateY(calc(8px * var(--mdt-scale)));
+    transform: translateY(calc(6px * var(--mdt-scale)));
   }
 
   .bolos-page.mounted {
-    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   .list-mode,
@@ -509,39 +652,59 @@
     display: flex;
     flex-direction: column;
     gap: calc(16px * var(--mdt-scale));
-    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    min-height: 0;
+    flex: 1;
+    animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
-  .page-header {
+  /* --- Masthead (asymmetric, no centered hero) --- */
+  .masthead {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
-    gap: calc(16px * var(--mdt-scale));
+    gap: calc(20px * var(--mdt-scale));
+    flex-wrap: wrap;
+    padding-bottom: calc(14px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
   }
 
-  .header-left {
-    display: flex;
-    flex-direction: column;
-    gap: calc(4px * var(--mdt-scale));
+  .masthead-copy {
+    max-width: min(52ch, 100%);
+    text-align: left;
   }
 
-  .page-title {
-    font-size: calc(22px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-text);
-    letter-spacing: -0.01em;
-  }
-
-  .page-subtitle {
-    font-size: calc(12px * var(--mdt-scale));
+  .masthead-kicker {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: calc(10px * var(--mdt-scale));
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
     color: var(--mdt-text-muted);
+    margin-bottom: calc(4px * var(--mdt-scale));
+  }
+
+  .masthead-title {
+    font-family: 'Unbounded', sans-serif;
+    font-size: calc(26px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: var(--mdt-text);
+  }
+
+  .masthead-sub {
+    margin-top: calc(6px * var(--mdt-scale));
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(12px * var(--mdt-scale));
+    line-height: 1.5;
+    color: var(--mdt-text-dim);
+    max-width: 50ch;
   }
 
   .btn-new {
     display: inline-flex;
     align-items: center;
     gap: calc(6px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(18px * var(--mdt-scale));
     background: var(--mdt-accent);
     color: var(--mdt-bg);
     border: none;
@@ -550,13 +713,9 @@
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
     flex-shrink: 0;
-  }
-
-  .btn-new svg {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
+    white-space: nowrap;
+    transition: opacity 0.15s ease, transform 0.1s ease;
   }
 
   .btn-new:hover {
@@ -564,76 +723,251 @@
   }
 
   .btn-new:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
-  .controls-bar {
+  /* --- Workspace: rail + feed (line-divided, no panels) --- */
+  .workspace {
+    display: grid;
+    grid-template-columns: minmax(calc(168px * var(--mdt-scale)), calc(220px * var(--mdt-scale))) 1fr;
+    gap: 0;
+    align-items: stretch;
+    min-height: 0;
+    flex: 1;
+    border-top: 1px solid var(--mdt-border);
+  }
+
+  @media (max-width: 820px) {
+    .workspace {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .rail {
+    position: sticky;
+    top: calc(4px * var(--mdt-scale));
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding: calc(16px * var(--mdt-scale)) calc(18px * var(--mdt-scale)) calc(16px * var(--mdt-scale)) 0;
+    background: transparent;
+    border-right: 1px solid var(--mdt-border);
+  }
+
+  @media (max-width: 820px) {
+    .rail {
+      position: static;
+      border-right: none;
+      border-bottom: 1px solid var(--mdt-border);
+      padding: calc(14px * var(--mdt-scale)) 0;
+    }
+  }
+
+  .rail-stat-label {
+    display: block;
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .rail-stat-value-row {
     display: flex;
     align-items: center;
-    gap: calc(10px * var(--mdt-scale));
+    gap: calc(8px * var(--mdt-scale));
+    margin-top: calc(4px * var(--mdt-scale));
   }
 
-  .filter-bar {
-    display: flex;
-    gap: calc(2px * var(--mdt-scale));
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    padding: calc(3px * var(--mdt-scale));
+  .rail-stat-num {
+    font-size: calc(28px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+    letter-spacing: -0.02em;
+    line-height: 1;
+  }
+
+  .live-mark {
+    width: calc(2px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
+    background: var(--mdt-success);
     flex-shrink: 0;
   }
 
-  .filter-tab {
-    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
-    background: transparent;
+  .rail-stat {
+    padding-bottom: calc(14px * var(--mdt-scale));
+    margin-bottom: calc(14px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .rail-block {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--mdt-scale));
+    padding-bottom: calc(14px * var(--mdt-scale));
+    margin-bottom: calc(14px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .rail-label {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .tab-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: calc(2px * var(--mdt-scale));
+  }
+
+  .tab-div {
+    width: 1px;
+    height: calc(12px * var(--mdt-scale));
+    background: var(--mdt-border);
+    margin: 0 calc(4px * var(--mdt-scale));
+    flex-shrink: 0;
+  }
+
+  .tab-link {
+    padding: calc(4px * var(--mdt-scale)) 0 calc(6px * var(--mdt-scale));
+    margin: 0;
     border: none;
-    border-radius: var(--mdt-radius-sm);
+    border-bottom: 2px solid transparent;
+    background: none;
     color: var(--mdt-text-muted);
     font-family: 'Outfit', sans-serif;
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 500;
     cursor: pointer;
-    transition: color 0.15s ease, background 0.15s ease;
+    transition:
+      color 0.15s ease,
+      border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   }
 
-  .filter-tab:hover {
+  .tab-link:hover {
     color: var(--mdt-text-dim);
-    background: var(--mdt-surface-2);
   }
 
-  .filter-tab.active {
-    color: var(--mdt-accent);
-    background: var(--mdt-surface-3);
+  .tab-link.selected {
+    color: var(--mdt-text);
+    border-bottom-color: var(--mdt-accent);
   }
 
-  .search-wrapper {
-    position: relative;
+  .type-nav {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0;
+  }
+
+  .type-nav-item {
+    text-align: left;
+    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    margin: 0;
+    border: none;
+    border-left: 2px solid transparent;
+    background: transparent;
+    color: var(--mdt-text-dim);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      border-color 0.2s ease,
+      background 0.15s ease;
+  }
+
+  .type-nav-item + .type-nav-item {
+    border-top: 1px solid var(--mdt-border);
+    margin-top: -1px;
+  }
+
+  .type-nav-item:hover {
+    color: var(--mdt-text);
+    background: color-mix(in srgb, var(--mdt-surface-2) 40%, transparent);
+  }
+
+  .type-nav-item.selected {
+    color: var(--mdt-text);
+    border-left-color: var(--mdt-accent);
+    background: color-mix(in srgb, var(--mdt-surface-2) 55%, transparent);
+  }
+
+  .rail-hint {
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    padding-top: calc(2px * var(--mdt-scale));
+    margin-top: auto;
+  }
+
+  .rail-hint-muted {
+    display: block;
+    margin-top: calc(2px * var(--mdt-scale));
+    opacity: 0.85;
+  }
+
+  /* --- Main column --- */
+  .main-col {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
     flex: 1;
-    max-width: calc(320px * var(--mdt-scale));
+    padding: calc(16px * var(--mdt-scale)) 0 calc(16px * var(--mdt-scale)) calc(20px * var(--mdt-scale));
   }
 
-  .search-icon {
+  @media (max-width: 820px) {
+    .main-col {
+      padding-left: 0;
+      padding-top: calc(12px * var(--mdt-scale));
+    }
+  }
+
+  .search-row {
+    width: 100%;
+    padding-bottom: calc(12px * var(--mdt-scale));
+    margin-bottom: calc(4px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .search-wrap {
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: min(100%, calc(520px * var(--mdt-scale)));
+  }
+
+  .search-wrap :global(.search-ic) {
     position: absolute;
-    left: calc(10px * var(--mdt-scale));
+    left: 0;
     top: 50%;
     transform: translateY(-50%);
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     pointer-events: none;
   }
 
   .search-input {
     width: 100%;
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale)) calc(8px * var(--mdt-scale)) calc(32px * var(--mdt-scale));
-    border-radius: var(--mdt-radius);
-    border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface);
+    padding: calc(8px * var(--mdt-scale)) calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale)) calc(26px * var(--mdt-scale));
+    border: none;
+    border-bottom: 1px solid var(--mdt-border);
+    border-radius: 0;
+    background: transparent;
     color: var(--mdt-text);
     font-family: 'Outfit', sans-serif;
     font-size: calc(12px * var(--mdt-scale));
     outline: none;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     box-sizing: border-box;
   }
 
@@ -642,335 +976,533 @@
   }
 
   .search-input:focus {
-    border-color: var(--mdt-accent);
+    border-bottom-color: color-mix(in srgb, var(--mdt-accent) 55%, var(--mdt-border));
   }
 
-  .loading-state {
+  /* --- Skeleton --- */
+  .skeleton-stack {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: calc(60px * var(--mdt-scale)) 0;
-    gap: calc(12px * var(--mdt-scale));
+    border-top: 1px solid var(--mdt-border);
   }
 
-  .spinner {
-    width: calc(28px * var(--mdt-scale));
-    height: calc(28px * var(--mdt-scale));
-    border: calc(3px * var(--mdt-scale)) solid var(--mdt-border-2);
-    border-top-color: var(--mdt-accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  .loading-text {
-    font-size: calc(12px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
-  .cards-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(calc(360px * var(--mdt-scale)), 1fr));
-    gap: calc(12px * var(--mdt-scale));
-  }
-
-  .bolo-card {
+  .sk-row {
     display: flex;
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
+    gap: calc(12px * var(--mdt-scale));
+    padding: calc(14px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid var(--mdt-border);
     overflow: hidden;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
     opacity: 0;
-    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    animation-delay: var(--card-delay);
+    animation: rowIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--sk-delay);
+    background: transparent;
   }
 
-  .bolo-card:hover {
-    border-color: var(--mdt-border-2);
-  }
-
-  .bolo-card.glow {
-    box-shadow: inset calc(3px * var(--mdt-scale)) 0 calc(12px * var(--mdt-scale)) calc(-6px * var(--mdt-scale)) color-mix(in srgb, var(--card-border-color) 20%, transparent);
-  }
-
-  .bolo-card.dimmed {
-    opacity: 0;
-    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    animation-delay: var(--card-delay);
-  }
-
-  .bolo-card.dimmed .card-content {
-    opacity: 0.55;
-  }
-
-  .card-left-border {
-    width: calc(4px * var(--mdt-scale));
+  .sk-stripe {
+    width: calc(2px * var(--mdt-scale));
+    background: var(--mdt-border-2);
     flex-shrink: 0;
-    background: var(--card-border-color);
-    border-radius: var(--mdt-radius) 0 0 var(--mdt-radius);
+    align-self: stretch;
   }
 
-  .card-content {
+  .sk-body {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: calc(8px * var(--mdt-scale));
-    padding: calc(14px * var(--mdt-scale));
     min-width: 0;
-    transition: opacity 0.2s ease;
   }
 
-  .card-top-row {
+  .sk-line {
+    height: calc(10px * var(--mdt-scale));
+    border-radius: 0;
+    background: linear-gradient(
+      90deg,
+      var(--mdt-surface-3) 0%,
+      var(--mdt-surface-2) 45%,
+      var(--mdt-surface-3) 90%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.35s ease-in-out infinite;
+  }
+
+  .sk-w-40 {
+    width: 40%;
+  }
+  .sk-w-55 {
+    width: 55%;
+  }
+  .sk-w-70 {
+    width: 70%;
+  }
+
+  /* --- Feed: rows divided by hairlines --- */
+  .feed {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    gap: 0;
+    overflow-y: auto;
+    padding-right: calc(4px * var(--mdt-scale));
+    min-height: 0;
+    flex: 1;
+    border-top: 1px solid var(--mdt-border);
+  }
+
+  .feed-item {
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .dossier {
+    border: none;
+    border-left: 2px solid transparent;
+    border-radius: 0;
+    background: transparent;
+    overflow: visible;
+    box-shadow: none;
+    opacity: 0;
+    transform: translateY(calc(6px * var(--mdt-scale)));
+    animation: rowIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    animation-delay: var(--enter-delay);
+    transition:
+      background 0.2s ease,
+      border-color 0.2s ease;
+  }
+
+  .dossier:hover {
+    background: color-mix(in srgb, var(--mdt-surface-2) 35%, transparent);
+  }
+
+  .dossier.open {
+    background: color-mix(in srgb, var(--mdt-surface-2) 50%, transparent);
+    border-left-color: var(--mdt-accent);
+  }
+
+  .dossier.inactive {
+    opacity: 0.92;
+  }
+
+  .dossier-hit {
+    display: flex;
+    width: 100%;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    text-align: left;
+    color: inherit;
+    font: inherit;
+  }
+
+  .dossier-hit:focus-visible {
+    outline: 2px solid var(--mdt-accent);
+    outline-offset: 2px;
+  }
+
+  .dossier-stripe {
+    width: calc(2px * var(--mdt-scale));
+    flex-shrink: 0;
+    background: var(--stripe);
+    align-self: stretch;
+  }
+
+  .dossier-main {
+    flex: 1;
+    padding: calc(14px * var(--mdt-scale)) calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
     gap: calc(8px * var(--mdt-scale));
   }
 
-  .card-badges {
+  .dossier-top {
     display: flex;
-    gap: calc(6px * var(--mdt-scale));
+    flex-wrap: wrap;
     align-items: center;
+    gap: calc(8px * var(--mdt-scale));
   }
 
-  .type-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
+  .type-ic {
+    display: flex;
+    color: var(--type-tone, var(--mdt-text-muted));
+    opacity: 0.9;
+  }
+
+  .type-label {
     font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    background: color-mix(in srgb, var(--type-color) 15%, transparent);
-    color: var(--type-color);
-    border: 1px solid color-mix(in srgb, var(--type-color) 30%, transparent);
-    white-space: nowrap;
-    line-height: 1.4;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    color: var(--type-tone, var(--mdt-text-dim));
   }
 
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    background: color-mix(in srgb, var(--status-color) 15%, transparent);
-    color: var(--status-color);
-    border: 1px solid color-mix(in srgb, var(--status-color) 25%, transparent);
-    white-space: nowrap;
-    line-height: 1.4;
-    text-transform: capitalize;
-  }
-
-  .card-date {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
+  .meta-sep {
+    width: 1px;
+    height: calc(11px * var(--mdt-scale));
+    background: var(--mdt-border);
     flex-shrink: 0;
   }
 
-  .card-title {
-    font-size: calc(14px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-text);
-    line-height: 1.3;
-    letter-spacing: -0.01em;
+  .status-inline {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 500;
+    color: var(--st);
+    font-family: 'Outfit', sans-serif;
   }
 
-  .card-desc {
+  .status-dot {
+    width: calc(5px * var(--mdt-scale));
+    height: calc(5px * var(--mdt-scale));
+    background: var(--st);
+    flex-shrink: 0;
+  }
+
+  .dossier-time {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(4px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+  }
+
+  .dossier-time :global(.time-ic) {
+    flex-shrink: 0;
+    opacity: 0.65;
+  }
+
+  .dossier-top :global(.chev) {
+    color: var(--mdt-text-muted);
+    flex-shrink: 0;
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .dossier.open :global(.chev) {
+    transform: rotate(180deg);
+  }
+
+  .dossier-title {
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(14px * var(--mdt-scale));
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
+    color: var(--mdt-text);
+  }
+
+  .dossier-preview {
     font-size: calc(12px * var(--mdt-scale));
+    line-height: 1.55;
     color: var(--mdt-text-dim);
-    line-height: 1.5;
+  }
+
+  .dossier-preview.clamp {
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  .card-plate {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    padding: calc(4px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius-sm);
-    align-self: flex-start;
+  .quick-actions {
+    padding: 0 calc(12px * var(--mdt-scale)) calc(10px * var(--mdt-scale))
+      calc((2px + 14px) * var(--mdt-scale));
+    border-top: 1px solid transparent;
   }
 
-  .card-plate svg {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    color: var(--mdt-warning, #f59e0b);
-    flex-shrink: 0;
+  .quick-hint {
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
   }
 
-  .card-plate span {
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text);
-    letter-spacing: 0.08em;
-  }
-
-  .card-meta {
+  .dossier-drawer {
+    padding: calc(12px * var(--mdt-scale)) calc(12px * var(--mdt-scale)) calc(16px * var(--mdt-scale))
+      calc((2px + 14px) * var(--mdt-scale));
+    border-top: 1px solid var(--mdt-border);
+    margin-left: calc(2px * var(--mdt-scale));
+    animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
     display: flex;
-    flex-wrap: wrap;
-    gap: calc(10px * var(--mdt-scale));
-    padding-top: calc(4px * var(--mdt-scale));
+    flex-direction: column;
+    gap: calc(12px * var(--mdt-scale));
   }
 
-  .meta-item {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    font-size: calc(11px * var(--mdt-scale));
+  .plate-inline {
+    display: flex;
+    align-items: baseline;
+    gap: calc(12px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid var(--mdt-border);
+    align-self: stretch;
+  }
+
+  .plate-label {
+    font-size: calc(9px * var(--mdt-scale));
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
     color: var(--mdt-text-muted);
   }
 
-  .meta-item svg {
-    width: calc(13px * var(--mdt-scale));
-    height: calc(13px * var(--mdt-scale));
-    flex-shrink: 0;
-    opacity: 0.6;
+  .plate-val {
+    font-size: calc(14px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+    letter-spacing: 0.12em;
   }
 
-  .meta-report span {
-    color: var(--mdt-accent);
-    opacity: 0.7;
-    font-size: calc(10px * var(--mdt-scale));
+  .meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(140px * var(--mdt-scale)), 1fr));
+    gap: calc(10px * var(--mdt-scale));
   }
 
-  .card-actions {
+  .meta-cell {
     display: flex;
-    gap: calc(6px * var(--mdt-scale));
-    padding-top: calc(6px * var(--mdt-scale));
-    border-top: 1px solid var(--mdt-border);
-    margin-top: calc(2px * var(--mdt-scale));
+    flex-direction: column;
+    gap: calc(3px * var(--mdt-scale));
   }
 
-  .action-btn {
+  .meta-span {
+    grid-column: 1 / -1;
+  }
+
+  .meta-lbl {
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .meta-val {
+    font-size: calc(12px * var(--mdt-scale));
+    color: var(--mdt-text-dim);
     display: inline-flex;
     align-items: center;
     gap: calc(5px * var(--mdt-scale));
-    padding: calc(5px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+  }
+
+  .meta-val :global(.meta-ic) {
+    flex-shrink: 0;
+    opacity: 0.55;
+  }
+
+  .drawer-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .btn-resolve,
+  .btn-cancel-bolo {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    border-radius: 2px;
     font-family: 'Outfit', sans-serif;
     font-size: calc(11px * var(--mdt-scale));
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
-    transition: background 0.12s ease, transform 0.1s ease, opacity 0.12s ease;
-    border: none;
+    background: transparent;
+    transition:
+      transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.15s ease,
+      filter 0.15s ease;
   }
 
-  .action-btn svg {
-    width: calc(13px * var(--mdt-scale));
-    height: calc(13px * var(--mdt-scale));
+  .btn-resolve {
+    color: var(--mdt-success);
+    border: 1px solid color-mix(in srgb, var(--mdt-success) 45%, var(--mdt-border));
   }
 
-  .action-btn:active {
-    transform: scale(0.97);
+  .btn-cancel-bolo {
+    color: var(--mdt-error);
+    border: 1px solid color-mix(in srgb, var(--mdt-error) 40%, var(--mdt-border));
   }
 
-  .action-btn:disabled {
-    opacity: 0.4;
+  .btn-resolve:active,
+  .btn-cancel-bolo:active {
+    transform: scale(0.98) translateY(1px);
+  }
+
+  .btn-resolve:disabled,
+  .btn-cancel-bolo:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .resolve-btn {
-    background: color-mix(in srgb, var(--mdt-success) 12%, transparent);
-    color: var(--mdt-success);
-    border: 1px solid color-mix(in srgb, var(--mdt-success) 25%, transparent);
+  .btn-resolve:hover:not(:disabled),
+  .btn-cancel-bolo:hover:not(:disabled) {
+    filter: brightness(1.08);
   }
 
-  .resolve-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--mdt-success) 20%, transparent);
-  }
-
-  .cancel-btn {
-    background: color-mix(in srgb, var(--mdt-error) 10%, transparent);
-    color: var(--mdt-error);
-    border: 1px solid color-mix(in srgb, var(--mdt-error) 20%, transparent);
-  }
-
-  .cancel-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--mdt-error) 18%, transparent);
-  }
-
+  /* --- Empty --- */
   .empty-state {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: calc(56px * var(--mdt-scale)) 0;
-    gap: calc(8px * var(--mdt-scale));
+    align-items: flex-start;
+    padding: calc(40px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale));
+    max-width: 42ch;
+  }
+
+  .empty-visual {
+    width: calc(44px * var(--mdt-scale));
+    height: calc(4px * var(--mdt-scale));
+    border-radius: 2px;
+    background: linear-gradient(90deg, var(--mdt-accent), transparent);
     opacity: 0.5;
   }
 
-  .empty-icon {
-    width: calc(40px * var(--mdt-scale));
-    height: calc(40px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
-  .empty-text {
-    font-size: calc(14px * var(--mdt-scale));
+  .empty-title {
+    font-family: 'Unbounded', sans-serif;
+    font-size: calc(16px * var(--mdt-scale));
     font-weight: 600;
-    color: var(--mdt-text-dim);
+    color: var(--mdt-text);
   }
 
   .empty-sub {
-    font-size: calc(11px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(12px * var(--mdt-scale));
+    line-height: 1.55;
+    color: var(--mdt-text-dim);
   }
 
+  .empty-reset {
+    margin-top: calc(4px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    border-radius: 2px;
+    border: 1px solid var(--mdt-border-2);
+    background: transparent;
+    color: var(--mdt-text);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 600;
+    cursor: pointer;
+    transition:
+      background 0.2s ease,
+      transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .empty-reset:hover {
+    background: color-mix(in srgb, var(--mdt-surface-2) 50%, transparent);
+  }
+
+  .empty-reset:active {
+    transform: scale(0.98);
+  }
+
+  /* --- Create mode (unchanged structure, aligned tokens) --- */
   .back-btn {
     display: inline-flex;
     align-items: center;
     gap: calc(6px * var(--mdt-scale));
     padding: calc(6px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
+    background: transparent;
     border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
+    border-radius: 2px;
     color: var(--mdt-text-dim);
     font-family: 'Outfit', sans-serif;
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease, transform 0.1s ease;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      transform 0.1s ease;
     align-self: flex-start;
   }
 
-  .back-btn svg {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-  }
-
   .back-btn:hover {
-    background: var(--mdt-surface-3);
+    background: color-mix(in srgb, var(--mdt-surface-2) 45%, transparent);
     color: var(--mdt-text);
   }
 
   .back-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.98);
   }
 
   .section-title {
-    font-size: calc(20px * var(--mdt-scale));
+    font-family: 'Unbounded', sans-serif;
+    font-size: calc(18px * var(--mdt-scale));
     font-weight: 700;
     color: var(--mdt-text);
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
+    padding-bottom: calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
   }
 
-  .form-card {
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    padding: calc(20px * var(--mdt-scale));
+  .create-form {
     display: flex;
     flex-direction: column;
-    gap: calc(16px * var(--mdt-scale));
+    gap: 0;
+    max-width: min(100%, calc(640px * var(--mdt-scale)));
+  }
+
+  .form-section {
+    padding: calc(16px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .form-section:last-child {
+    border-bottom: none;
+  }
+
+  .type-tabs {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 0;
+    border: 1px solid var(--mdt-border);
+    border-radius: 0;
+  }
+
+  .type-tabs-div {
+    width: 1px;
+    background: var(--mdt-border);
+    flex-shrink: 0;
+    align-self: stretch;
+  }
+
+  .type-tab {
+    flex: 1;
+    min-width: calc(88px * var(--mdt-scale));
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border: none;
+    background: transparent;
+    color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 500;
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease,
+      box-shadow 0.2s ease;
+    box-shadow: inset 0 -2px 0 transparent;
+  }
+
+  .type-tab:hover {
+    color: var(--mdt-text);
+    background: color-mix(in srgb, var(--mdt-surface-2) 40%, transparent);
+  }
+
+  .type-tab.selected {
+    color: var(--mdt-text);
+    box-shadow: inset 0 -2px 0 var(--type-tab-tone, var(--mdt-accent));
+    background: color-mix(in srgb, var(--mdt-surface-2) 25%, transparent);
   }
 
   .form-group {
@@ -985,24 +1517,36 @@
     gap: calc(14px * var(--mdt-scale));
   }
 
+  @media (max-width: 560px) {
+    .form-row {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .form-label {
     font-size: calc(10px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
+    font-family: 'Outfit', sans-serif;
   }
 
   .required {
     color: var(--mdt-error);
   }
 
+  .form-group-half {
+    min-width: 0;
+  }
+
   .form-input {
     width: 100%;
-    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
-    border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface-2);
+    padding: calc(9px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border-radius: 0;
+    border: none;
+    border-bottom: 1px solid var(--mdt-border);
+    background: transparent;
     color: var(--mdt-text);
     font-family: 'Outfit', sans-serif;
     font-size: calc(13px * var(--mdt-scale));
@@ -1011,21 +1555,17 @@
     box-sizing: border-box;
   }
 
-  .form-input::placeholder {
-    color: var(--mdt-text-muted);
-  }
-
   .form-input:focus {
-    border-color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 50%, var(--mdt-border));
   }
 
   .form-textarea {
     width: 100%;
     resize: vertical;
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+    padding: calc(10px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border-radius: 0;
     border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface-2);
+    background: color-mix(in srgb, var(--mdt-surface-2) 30%, transparent);
     color: var(--mdt-text);
     font-family: 'Outfit', sans-serif;
     font-size: calc(13px * var(--mdt-scale));
@@ -1036,60 +1576,12 @@
     box-sizing: border-box;
   }
 
-  .form-textarea::placeholder {
-    color: var(--mdt-text-muted);
-  }
-
   .form-textarea:focus {
-    border-color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 50%, var(--mdt-border));
   }
 
   .form-textarea-sm {
     min-height: calc(80px * var(--mdt-scale));
-  }
-
-  .type-selector {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: calc(6px * var(--mdt-scale));
-  }
-
-  .type-option {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: calc(7px * var(--mdt-scale));
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius-sm);
-    background: var(--mdt-surface-2);
-    color: var(--mdt-text-dim);
-    font-family: 'Outfit', sans-serif;
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 500;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, transform 0.1s ease;
-  }
-
-  .type-option svg {
-    width: calc(16px * var(--mdt-scale));
-    height: calc(16px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .type-option:hover {
-    border-color: var(--mdt-border-2);
-    background: var(--mdt-surface-3);
-  }
-
-  .type-option:active {
-    transform: scale(0.97);
-  }
-
-  .type-option.active {
-    border-color: color-mix(in srgb, var(--type-opt-color) 60%, transparent);
-    background: color-mix(in srgb, var(--type-opt-color) 10%, transparent);
-    color: var(--type-opt-color);
   }
 
   .photo-preview-box {
@@ -1102,9 +1594,9 @@
   .photo-preview-frame {
     width: calc(160px * var(--mdt-scale));
     height: calc(120px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+    border-radius: 0;
     border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface-2);
+    background: color-mix(in srgb, var(--mdt-surface-2) 35%, transparent);
     overflow: hidden;
   }
 
@@ -1118,14 +1610,14 @@
     display: flex;
     justify-content: flex-end;
     gap: calc(8px * var(--mdt-scale));
-    padding-top: calc(6px * var(--mdt-scale));
+    padding-top: calc(4px * var(--mdt-scale));
   }
 
   .btn-cancel {
     padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+    border-radius: 2px;
     border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface-2);
+    background: transparent;
     color: var(--mdt-text-dim);
     font-family: 'Outfit', sans-serif;
     font-size: calc(12px * var(--mdt-scale));
@@ -1135,13 +1627,13 @@
   }
 
   .btn-cancel:hover {
-    background: var(--mdt-surface-3);
+    background: color-mix(in srgb, var(--mdt-surface-2) 50%, transparent);
     color: var(--mdt-text);
   }
 
   .btn-primary {
     padding: calc(8px * var(--mdt-scale)) calc(20px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
+    border-radius: 2px;
     border: none;
     background: var(--mdt-accent);
     color: var(--mdt-bg);
@@ -1149,15 +1641,17 @@
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.1s ease;
   }
 
   .btn-primary:hover {
-    opacity: 0.9;
+    opacity: 0.92;
   }
 
   .btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.98);
   }
 
   .btn-primary:disabled {
@@ -1172,7 +1666,7 @@
   @keyframes fadeIn {
     from {
       opacity: 0;
-      transform: translateY(calc(6px * var(--mdt-scale)));
+      transform: translateY(calc(5px * var(--mdt-scale)));
     }
     to {
       opacity: 1;
@@ -1180,7 +1674,7 @@
     }
   }
 
-  @keyframes cardIn {
+  @keyframes rowIn {
     from {
       opacity: 0;
       transform: translateY(calc(10px * var(--mdt-scale)));
@@ -1191,9 +1685,13 @@
     }
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
+  @keyframes shimmer {
+    0% {
+      background-position: 100% 0;
+    }
+    100% {
+      background-position: -100% 0;
     }
   }
+
 </style>

@@ -2,69 +2,62 @@
   import { onMount, tick } from 'svelte';
   import { mdtStore } from '../lib/stores/mdt.svelte.js';
   import { dataStore } from '../lib/stores/data.svelte.js';
+  import { isEnvBrowser, nuiPost } from '../lib/utils/nui.js';
+  import { playMdtSound } from '../lib/utils/mdtSounds.js';
   import { tabsStore } from '../lib/stores/tabs.svelte.js';
   import { dashboardLayout } from '../lib/stores/dashboardLayout.svelte.js';
   import DashboardCustomizer from '../lib/components/DashboardCustomizer.svelte';
-  import { isEnvBrowser } from '../lib/utils/nui.js';
-  import { getGreeting } from '../lib/utils/helpers.js';
+  import QuickActionsWidget from '../lib/components/QuickActionsWidget.svelte';
   import {
     Radio,
     FileText,
     AlertTriangle,
     Shield,
-    Bell,
-    ChevronRight,
-    Search,
     Megaphone,
     Send,
     Users,
-    X,
-    BadgeCheck,
     Siren,
-    Clock,
     MessageSquare,
     SlidersHorizontal,
-  } from 'lucide-svelte';
+    ChevronRight,
+  } from '@lucide/svelte';
 
   let layout = dashboardLayout;
 
   let mounted = $state(false);
-  let searchQuery = $state('');
-  let searchOpen = $state(false);
-  let searchInputEl = $state(null);
   let chatInputVal = $state('');
   let chatListEl = $state(null);
   let sendingChat = $state(false);
 
-  let greeting = $derived(getGreeting());
   let officer = $derived(mdtStore.officer);
+  let settings = $derived(mdtStore.settings);
   let stats = $derived(dataStore.dashboardStats);
-  let motd = $derived(dataStore.dashboardMotd);
   let bolos = $derived(dataStore.dashboardBolos || []);
   let announcements = $derived(dataStore.dashboardAnnouncements || []);
-  let dispatchCalls = $derived(dataStore.dashboardDispatchCalls || []);
+  /** Same source as Dispatch page (`getDashboard` dispatch list empty on server). */
+  let dispatchCalls = $derived.by(() => {
+    const raw = dataStore.dispatchCalls || [];
+    return [...raw].sort((a, b) => {
+      const ta = new Date(a.createdAt || a.created_at || 0).getTime();
+      const tb = new Date(b.createdAt || b.created_at || 0).getTime();
+      return tb - ta;
+    });
+  });
   let recentReports = $derived(dataStore.dashboardRecentReports || []);
   let onDutyOfficers = $derived(dataStore.dashboardOnDutyOfficers || []);
   let chatMessages = $derived(dataStore.dashboardChatMessages || []);
 
-  let displayName = $derived(
-    officer.firstName && officer.lastName
-      ? `${officer.firstName} ${officer.lastName}`
-      : officer.name || 'Officer'
-  );
-
   let rankLabel = $derived(officer.rank || 'Officer');
   let callsign = $derived(officer.callsign || '—');
-  let deptShort = $derived(officer.departmentShort || 'DEPT');
 
   let statCards = $derived([
-    { key: 'activeCalls', label: 'Active Calls', value: stats.activeCalls || 0, icon: Radio, color: '--mdt-accent' },
+    { key: 'activeCalls', label: 'Active Calls', value: stats.activeCalls || 0, icon: Radio, color: '--mdt-error' },
     { key: 'openReports', label: 'Open Reports', value: stats.openReports || 0, icon: FileText, color: '--mdt-warning' },
     { key: 'activeWarrants', label: 'Active Warrants', value: stats.activeWarrants || 0, icon: AlertTriangle, color: '--mdt-error' },
     { key: 'unitsOnDuty', label: 'Units On Duty', value: stats.unitsOnDuty || 0, icon: Shield, color: '--mdt-success' },
   ]);
 
-  let recentBolos = $derived(bolos.slice(0, 4));
+  let recentBolos = $derived(bolos.slice(0, 3));
 
   const STATUS_COLORS = {
     available: '#34d399',
@@ -97,9 +90,67 @@
     closed: '#6b7280',
   };
 
+  const DISPATCH_SEVERITY_COLORS = {
+    critical: '#f87171',
+    high: '#fb923c',
+    medium: '#fbbf24',
+    low: '#94a3b8',
+  };
+
+  function dispatchAccentColor(call) {
+    const st = call?.status;
+    if (st && DISPATCH_STATUS_COLORS[st]) return DISPATCH_STATUS_COLORS[st];
+    const sev = String(call?.severity || '').toLowerCase();
+    if (sev && DISPATCH_SEVERITY_COLORS[sev]) return DISPATCH_SEVERITY_COLORS[sev];
+    return '#6b7280';
+  }
+
+  function dispatchCallTitle(call) {
+    return call?.title || call?.description || '—';
+  }
+
+  function dispatchCallUnit(call) {
+    return call?.primaryCallsign || call?.unit || '—';
+  }
+
+  function dispatchCallTimestamp(call) {
+    return call?.createdAt || call?.created_at || '';
+  }
+
+  function dispatchBadgeLabel(call) {
+    const raw = call?.statusLabel || call?.codeName || call?.status || call?.severity || 'active';
+    return String(raw).replace(/_/g, ' ');
+  }
+
+  let visibleLeftWidgets = $derived([
+    layout.isVisible('dispatch') ? 'dispatch' : null,
+    layout.isVisible('reports') ? 'reports' : null,
+    layout.isVisible('bolos') ? 'bolos' : null,
+  ].filter(Boolean));
+
+  let visibleRightWidgets = $derived([
+    layout.isVisible('officers') ? 'officers' : null,
+    layout.isVisible('chat') ? 'chat' : null,
+  ].filter(Boolean));
+
+  let mainGridClass = $derived.by(() => {
+    const left = visibleLeftWidgets.length;
+    const right = visibleRightWidgets.length;
+    if (left === 0 && right === 0) return 'main-grid empty';
+    if (left === 0) return 'main-grid right-only';
+    if (right === 0) return 'main-grid left-only';
+    return 'main-grid';
+  });
+
   function navigate(pageId) {
     tabsStore.openTab(pageId);
   }
+
+  $effect(() => {
+    if (!mdtStore.pendingAuthedIntro) return;
+    if (tabsStore.activePage !== 'dashboard') return;
+    playMdtSound('dashboard');
+  });
 
   function formatTimeAgo(timestamp) {
     if (!timestamp) return '';
@@ -119,21 +170,51 @@
     return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
   }
 
-  async function toggleSearch() {
-    searchOpen = !searchOpen;
-    if (searchOpen) {
-      await tick();
-      searchInputEl?.focus();
-    } else {
-      searchQuery = '';
-    }
+  function chatAvatarInitials(msg) {
+    const n = String(msg.name || '').trim();
+    const c = String(msg.callsign || '').trim();
+    if (n.length >= 2) return n.slice(0, 2).toUpperCase();
+    if (n.length === 1) return (n + (c[0] || '?')).slice(0, 2).toUpperCase();
+    const parts = c.split(/[-\s]/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return (c.slice(0, 2) || '??').toUpperCase();
   }
 
-  function handleSearchKey(e) {
-    if (e.key === 'Escape') {
-      searchOpen = false;
-      searchQuery = '';
+  function chatSenderLine(msg) {
+    const cs = msg.callsign || '—';
+    const nm = msg.name ? String(msg.name) : '';
+    const rk = msg.rank ? String(msg.rank) : '';
+    if (nm && rk) return `${cs} · ${rk} ${nm}`;
+    if (nm) return `${cs} · ${nm}`;
+    return cs;
+  }
+
+  function chatAvatarHue(msg) {
+    let h = 0;
+    const s = String(msg.callsign || msg.name || 'x');
+    for (let i = 0; i < s.length; i++) h = (h + s.charCodeAt(i) * (i + 1)) % 360;
+    return h;
+  }
+
+  function chatMsgIsMine(msg) {
+    if (msg.isMine) return true;
+    const myId = officer?.officerId;
+    const oid = msg.officerId;
+    if (myId != null && oid != null && String(myId) === String(oid)) return true;
+    return false;
+  }
+
+  /** Server `avatar` on row, else local profile URL for own messages. */
+  function chatAvatarDisplayUrl(msg) {
+    const fromRow = String(msg.avatar || '').trim();
+    if (fromRow) return fromRow;
+    if (chatMsgIsMine(msg)) {
+      const o = String(officer?.avatar || '').trim();
+      if (o) return o;
+      const s = String(settings?.avatarUrl || '').trim();
+      if (s) return s;
     }
+    return '';
   }
 
   async function handleSendChat() {
@@ -166,819 +247,719 @@
 
   onMount(() => {
     mounted = true;
-    dataStore.fetchDashboard();
+    const sub = !isEnvBrowser()
+      ? nuiPost('cortex_mdt:subscribeDispatch').catch(() => {})
+      : Promise.resolve();
+    Promise.all([
+      dataStore.fetchDashboard(),
+      dataStore.fetchUnits(),
+      dataStore.fetchDispatch(),
+      sub,
+    ]);
   });
 </script>
 
 <div class="dashboard" class:mounted>
 
-  <!-- ── Header Row ──────────────────────────────── -->
-  <div class="dash-header">
-    <div class="header-left">
-      <div class="rank-badge">
-        <BadgeCheck size={12} />
-        <span class="rank-badge-text font-mono">{deptShort}</span>
-      </div>
-      <div class="header-identity">
-        <h1 class="header-greeting">{greeting}, <span class="accent">{displayName}</span></h1>
-        <div class="header-meta">
-          <span class="meta-chip rank-chip">{rankLabel}</span>
-          <span class="meta-sep">·</span>
-          <span class="meta-chip callsign-chip font-mono">{callsign}</span>
-        </div>
-      </div>
+  {#if layout.isVisible('quickActions')}
+    <div class="dash-prelude-qa">
+      <QuickActionsWidget />
     </div>
-
-    <div class="header-right">
-      <!-- Expandable Search -->
-      <div class="search-wrap" class:open={searchOpen}>
-        {#if searchOpen}
-          <input
-            bind:this={searchInputEl}
-            class="search-input font-mono"
-            type="text"
-            placeholder="Search MDT..."
-            bind:value={searchQuery}
-            onkeydown={handleSearchKey}
-          />
-          <button class="search-close-btn" onclick={toggleSearch} title="Close search">
-            <X size={14} />
-          </button>
-        {:else}
-          <button class="search-icon-btn" onclick={toggleSearch} title="Search">
-            <Search size={16} />
-          </button>
-        {/if}
-      </div>
-
-      <!-- Customize Dashboard -->
-      <button class="customize-btn" onclick={() => layout.openCustomizer()} title="Customize dashboard widgets">
-        <SlidersHorizontal size={14} />
-        <span class="customize-btn-label">Customize</span>
-      </button>
-
-      <!-- On Duty Status pill -->
-      <div class="duty-status-pill">
-        <span class="duty-dot"></span>
-        <span class="duty-label font-mono">ON DUTY</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- ── Announcements Banner (top priority) ─────── -->
-  {#if layout.isVisible('announcements') && announcements.length > 0}
-    <div class="announcements-section">
-      <div class="section-label">
-        <Megaphone size={11} />
-        <span>Bulletins & Announcements</span>
-      </div>
-      <div class="ann-list">
-        {#each announcements.slice(0, 3) as ann (ann.id)}
-          <div class="ann-item">
-            <div class="ann-icon-wrap">
-              <Bell size="100%" />
-            </div>
-            <div class="ann-body">
-              <span class="ann-title">{ann.title}</span>
-              <span class="ann-content">{ann.content}</span>
-            </div>
-          </div>
-        {/each}
-      </div>
-    </div>
-  {/if}
-
-  <!-- ── MOTD ─────────────────────────────────────── -->
-  {#if layout.isVisible('motd') && motd}
-    <div class="motd-card">
-      <div class="motd-label">
-        <Bell size={11} />
-        <span>Message of the Day</span>
-      </div>
-      <p class="motd-text">{motd}</p>
-    </div>
-  {/if}
-
-  <!-- ── Stat Cards ────────────────────────────────── -->
-  {#if layout.isVisible('statCards')}
-  <div class="stats-row">
-    {#each statCards as card, i (card.key)}
-      {@const Icon = card.icon}
+    <div class="prelude-hrule" aria-hidden="true"></div>
+  {:else}
+    <div class="dash-layout-only">
       <button
-        class="stat-card"
-        style="--card-color: var({card.color}); --delay: {i * 0.05}s"
-        onclick={() => {
-          if (card.key === 'openReports') navigate('reports');
-          else if (card.key === 'activeWarrants') navigate('warrants');
-          else if (card.key === 'unitsOnDuty') navigate('units');
-          else if (card.key === 'activeCalls') navigate('units');
-        }}
+        type="button"
+        class="dash-layout-only-btn"
+        onclick={() => layout.openCustomizer()}
+        title="Customize dashboard layout"
+        aria-label="Customize dashboard layout"
       >
-        <div class="stat-icon">
-          <Icon size="100%" />
-        </div>
-        <div class="stat-info">
-          <span class="stat-value font-mono">{card.value}</span>
-          <span class="stat-label">{card.label}</span>
-        </div>
-        <div class="stat-bar" style="--bar-pct: {Math.min(100, card.value * 20)}%"></div>
+        <SlidersHorizontal size={14} />
       </button>
-    {/each}
-  </div>
+    </div>
+  {/if}
+
+  <!-- ── Bulletins (ruled, no cards) ─── -->
+  {#if layout.isVisible('announcements')}
+    <div class="dash-prelude">
+      <section class="bulletins-block" aria-label="Bulletins">
+          <header class="bulletins-head">
+            <div class="bulletins-head-left">
+              <Megaphone size={12} class="bulletins-ico" />
+              <span class="bulletins-title">Bulletins</span>
+            </div>
+          </header>
+          {#if announcements.length > 0}
+            <ul class="bulletins-list">
+              {#each announcements.slice(0, 4) as ann (ann.id)}
+                <li class="bulletin-item">
+                  <span class="bulletin-title">{ann.title}</span>
+                  <p class="bulletin-body">{ann.content}</p>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="bulletins-empty">No active bulletins.</p>
+          {/if}
+        </section>
+    </div>
+    <div class="prelude-hrule" aria-hidden="true"></div>
+  {/if}
+
+  <!-- ── Stats strip (image-2 style: icon tile + two lines, dividers) ─── -->
+  {#if layout.isVisible('statCards')}
+    <div class="stats-strip">
+      {#each statCards as card, i (card.key)}
+        {@const Icon = card.icon}
+        <button
+          class="stat-cell"
+          style="--cell-color: var({card.color}); --delay: {i * 0.05}s"
+          onclick={() => {
+            if (card.key === 'openReports') navigate('reports');
+            else if (card.key === 'activeWarrants') navigate('warrants');
+            else if (card.key === 'unitsOnDuty') navigate('units');
+            else if (card.key === 'activeCalls') navigate('units');
+          }}
+        >
+          <div class="stat-cell-ico">
+            <Icon size="100%" />
+          </div>
+          <div class="stat-cell-lines">
+            <span class="stat-cell-value font-mono">{card.value}</span>
+            <span class="stat-cell-label">{card.label}</span>
+          </div>
+        </button>
+      {/each}
+    </div>
+    <div class="stats-strip-hrule" aria-hidden="true"></div>
   {/if}
 
   <!-- ── Main Grid ─────────────────────────────────── -->
-  <div class="main-grid">
+  <div class={mainGridClass}>
 
-    <!-- Column 1: Dispatch + Recent Reports + Active BOLOs -->
-    <div class="col col-left">
+    <!-- Column 1: Dispatch + Reports + BOLOs -->
+    {#if visibleLeftWidgets.length > 0}
+      <div class="col col-left">
 
-      <!-- Recent Dispatch Calls -->
-      {#if layout.isVisible('dispatch')}
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title-row">
-            <Siren size={13} class="panel-icon" />
-            <h2 class="panel-title">Recent Dispatch</h2>
-          </div>
-          <button class="see-all" onclick={() => navigate('units')}>View All</button>
-        </div>
-        <div class="dispatch-list">
-          {#each dispatchCalls.slice(0, 4) as call (call.id)}
-            {@const statusColor = DISPATCH_STATUS_COLORS[call.status] || '#6b7280'}
-            <div class="dispatch-item" style="--dispatch-color: {statusColor}">
-              <div class="dispatch-code font-mono">{call.code}</div>
-              <div class="dispatch-body">
-                <span class="dispatch-desc">{call.description}</span>
-                <div class="dispatch-meta">
-                  <span class="dispatch-unit font-mono">{call.unit}</span>
-                  <span class="dispatch-dot-sep">·</span>
-                  <span class="dispatch-time">{formatTimeAgo(call.created_at)}</span>
+        {#if layout.isVisible('dispatch')}
+          <div class="panel dispatch-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <Siren size={13} class="panel-icon" />
+                <h2 class="panel-title">Recent Dispatch</h2>
+              </div>
+              <button class="see-all" onclick={() => navigate('dispatch')}>View All</button>
+            </div>
+            <div class="dispatch-list">
+              {#each dispatchCalls as call (call.id)}
+                {@const statusColor = dispatchAccentColor(call)}
+                <div class="dispatch-item" style="--dispatch-color: {statusColor}">
+                  <div class="dispatch-item-top">
+                    <span class="dispatch-code font-mono">{call.code}</span>
+                    <span class="dispatch-status-text" style="color: {statusColor}">{dispatchBadgeLabel(call)}</span>
+                  </div>
+                  <span class="dispatch-desc">{dispatchCallTitle(call)}</span>
+                  {#if call.location}
+                    <span class="dispatch-loc">{call.location}</span>
+                  {/if}
+                  <div class="dispatch-meta">
+                    <span class="dispatch-unit font-mono">{dispatchCallUnit(call)}</span>
+                    <span class="dispatch-dot-sep">·</span>
+                    <span class="dispatch-time">{formatTimeAgo(dispatchCallTimestamp(call))}</span>
+                  </div>
                 </div>
-              </div>
-              <div class="dispatch-status-dot" style="background: {statusColor}"></div>
+              {:else}
+                <div class="empty-state">No active calls</div>
+              {/each}
             </div>
-          {:else}
-            <div class="empty-state">No active calls</div>
-          {/each}
-        </div>
-      </div>
-      {/if}
-
-      <!-- Recent Reports -->
-      {#if layout.isVisible('reports')}
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title-row">
-            <FileText size={13} class="panel-icon" />
-            <h2 class="panel-title">Recent Reports</h2>
           </div>
-          <button class="see-all" onclick={() => navigate('reports')}>View All</button>
-        </div>
-        <div class="reports-list">
-          {#each recentReports.slice(0, 4) as report (report.id)}
-            {@const rStatus = REPORT_STATUS[report.status] || REPORT_STATUS.open}
-            <button class="report-item" onclick={() => navigate('reports')}>
-              <div class="report-number font-mono">{report.id.split('-').pop()}</div>
-              <div class="report-body">
-                <span class="report-title">{report.title}</span>
-                <span class="report-author">{report.author} · {formatTimeAgo(report.created_at)}</span>
-              </div>
-              <span class="report-status-badge" style="color: var({rStatus.color}); background: color-mix(in srgb, var({rStatus.color}) 12%, transparent); border-color: color-mix(in srgb, var({rStatus.color}) 22%, transparent)">{rStatus.label}</span>
-            </button>
-          {:else}
-            <div class="empty-state">No recent reports</div>
-          {/each}
-        </div>
-      </div>
-      {/if}
+        {/if}
 
-      <!-- Active BOLOs -->
-      {#if layout.isVisible('bolos')}
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title-row">
-            <AlertTriangle size={13} class="panel-icon" />
-            <h2 class="panel-title">Active BOLOs</h2>
-          </div>
-          {#if bolos.length > 4}
-            <button class="see-all" onclick={() => navigate('bolos')}>See All</button>
-          {/if}
-        </div>
-        <div class="bolo-list">
-          {#each recentBolos as bolo (bolo.id)}
-            <div class="bolo-item">
-              <div class="bolo-type" class:person={bolo.type === 'person'} class:vehicle={bolo.type === 'vehicle'} class:weapon={bolo.type === 'weapon'} title={bolo.type}>
-                {bolo.type?.[0]?.toUpperCase() || '?'}
+        {#if layout.isVisible('reports')}
+          <div class="panel reports-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <FileText size={13} class="panel-icon" />
+                <h2 class="panel-title">Recent Reports</h2>
               </div>
-              <div class="bolo-info">
-                <span class="bolo-title">{bolo.title || 'Untitled BOLO'}</span>
-                <span class="bolo-meta">{bolo.type || 'Unknown'} · {formatTimeAgo(bolo.created_at)}</span>
-              </div>
+              <button class="see-all" onclick={() => navigate('reports')}>View All</button>
             </div>
-          {:else}
-            <div class="empty-state">No active BOLOs</div>
-          {/each}
-        </div>
-      </div>
-      {/if}
-    </div>
-
-    <!-- Column 2: Officer List + Officer Chat -->
-    <div class="col col-right">
-
-      <!-- On-Duty Officers -->
-      {#if layout.isVisible('officers')}
-      <div class="panel officer-panel">
-        <div class="panel-header">
-          <div class="panel-title-row">
-            <Users size={13} class="panel-icon" />
-            <h2 class="panel-title">Officers On Duty</h2>
-          </div>
-          <button class="see-all" onclick={() => navigate('units')}>
-            <span class="officer-count-badge">{onDutyOfficers.length}</span>
-          </button>
-        </div>
-        <div class="officer-list">
-          {#each onDutyOfficers as ofc (ofc.id)}
-            {@const statusColor = STATUS_COLORS[ofc.status] || STATUS_COLORS.off_duty}
-            {@const statusLabel = STATUS_LABELS[ofc.status] || ofc.status}
-            <div class="officer-row" style="--ofc-color: {statusColor}">
-              <span class="ofc-callsign font-mono">{ofc.callsign}</span>
-              <div class="ofc-info">
-                <span class="ofc-name">{ofc.name}</span>
-                <span class="ofc-rank">{ofc.rank}</span>
-              </div>
-              <div class="ofc-status" style="color: {statusColor}">
-                <span class="ofc-status-dot" style="background: {statusColor}; {ofc.status === 'emergency' ? 'animation: emergDot 1s ease-in-out infinite;' : ''}"></span>
-                <span class="ofc-status-label">{statusLabel}</span>
-              </div>
+            <div class="reports-list">
+              {#each recentReports.slice(0, 4) as report (report.id)}
+                {@const rStatus = REPORT_STATUS[report.status] || REPORT_STATUS.open}
+                <button class="report-item" onclick={() => navigate('reports')}>
+                  <span class="report-number font-mono">#{report.id.split('-').pop()}</span>
+                  <div class="report-body">
+                    <span class="report-title">{report.title}</span>
+                    <span class="report-author">{report.author} · {formatTimeAgo(report.created_at)}</span>
+                  </div>
+                  <span class="report-status-text" style="--status-color: var({rStatus.color})">{rStatus.label}</span>
+                </button>
+              {:else}
+                <div class="empty-state">No recent reports</div>
+              {/each}
             </div>
-          {:else}
-            <div class="empty-state">No officers on duty</div>
-          {/each}
-        </div>
-      </div>
-      {/if}
-
-      <!-- Officer Chat -->
-      {#if layout.isVisible('chat')}
-      <div class="panel chat-panel">
-        <div class="panel-header">
-          <div class="panel-title-row">
-            <MessageSquare size={13} class="panel-icon" />
-            <h2 class="panel-title">Officer Chat</h2>
           </div>
-          <span class="live-badge">
-            <span class="live-dot"></span>
-            Live
-          </span>
-        </div>
-        <div class="chat-messages" bind:this={chatListEl}>
-          {#each chatMessages as msg (msg.id)}
-            <div class="chat-msg" class:mine={msg.isMine}>
-              <div class="chat-msg-meta">
-                <span class="chat-callsign font-mono">{msg.callsign}</span>
-                <span class="chat-rank">{msg.rank}</span>
-                <span class="chat-name">{msg.name}</span>
-                <span class="chat-time font-mono">{formatChatTime(msg.timestamp)}</span>
+        {/if}
+
+        {#if layout.isVisible('bolos')}
+          <div class="panel bolos-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <AlertTriangle size={13} class="panel-icon" />
+                <h2 class="panel-title">Active BOLOs</h2>
               </div>
-              <div class="chat-bubble">
-                {msg.message}
-              </div>
+              {#if bolos.length > 3}
+                <button class="see-all" onclick={() => navigate('bolos')}>See All</button>
+              {/if}
             </div>
-          {:else}
-            <div class="empty-state chat-empty">No messages yet</div>
-          {/each}
-        </div>
-        <div class="chat-input-row">
-          <input
-            class="chat-input"
-            type="text"
-            placeholder="Broadcast message..."
-            bind:value={chatInputVal}
-            onkeydown={handleChatKey}
-            disabled={sendingChat}
-          />
-          <button class="chat-send-btn" onclick={handleSendChat} disabled={sendingChat || !chatInputVal.trim()} title="Send">
-            <Send size={14} />
-          </button>
-        </div>
+            <div class="bolo-list">
+              {#each recentBolos as bolo (bolo.id)}
+                <div class="bolo-item">
+                  <div class="bolo-info">
+                    <span class="bolo-title">{bolo.title || 'Untitled BOLO'}</span>
+                    <span class="bolo-meta">{bolo.type} · {formatTimeAgo(bolo.created_at)}</span>
+                  </div>
+                  <ChevronRight size={12} class="bolo-arrow" />
+                </div>
+              {:else}
+                <div class="empty-state">No active BOLOs</div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
       </div>
-      {/if}
-    </div>
+    {/if}
+
+    <!-- Column 2: Officers + Chat -->
+    {#if visibleRightWidgets.length > 0}
+      <div class="col col-right">
+
+        {#if layout.isVisible('officers')}
+          <div class="panel officers-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <Users size={13} class="panel-icon" />
+                <h2 class="panel-title">Officers On Duty</h2>
+              </div>
+              <span class="officer-count font-mono">{onDutyOfficers.length} on roster</span>
+            </div>
+            <div class="officer-list">
+              {#each onDutyOfficers as ofc (ofc.id)}
+                {@const statusColor = STATUS_COLORS[ofc.status] || STATUS_COLORS.off_duty}
+                {@const statusLabel = STATUS_LABELS[ofc.status] || ofc.status}
+                <div class="officer-row" style="--ofc-color: {statusColor}">
+                  <span class="ofc-callsign font-mono">{ofc.callsign}</span>
+                  {#if ofc.avatar}
+                    <img class="ofc-avatar" src={ofc.avatar} alt="" />
+                  {/if}
+                  <div class="ofc-info">
+                    <span class="ofc-name">{ofc.name}</span>
+                    <span class="ofc-rank">{ofc.rank}</span>
+                  </div>
+                  <div class="ofc-status">
+                    <span class="ofc-dot" style="background: {statusColor}; {ofc.status === 'emergency' ? 'animation: emergPulse 1s infinite;' : ''}"></span>
+                    <span class="ofc-status-label">{statusLabel}</span>
+                  </div>
+                </div>
+              {:else}
+                <div class="empty-state">No officers on duty</div>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        {#if layout.isVisible('chat')}
+          <div class="panel chat-panel">
+            <div class="panel-header">
+              <div class="panel-title-row">
+                <MessageSquare size={13} class="panel-icon" />
+                <h2 class="panel-title">Officer Chat</h2>
+              </div>
+              <span class="live-indicator">
+                <span class="live-dot"></span>
+                Live
+              </span>
+            </div>
+            <div class="chat-messages" bind:this={chatListEl}>
+              {#each chatMessages as msg (msg.id)}
+                {@const chatAvUrl = chatAvatarDisplayUrl(msg)}
+                <div class="chat-msg" class:mine={chatMsgIsMine(msg)}>
+                  <div
+                    class="chat-avatar font-mono"
+                    class:chat-avatar-img-wrap={!!chatAvUrl}
+                    style="--chat-av-h: {chatAvatarHue(msg)}"
+                    aria-hidden="true"
+                  >
+                    {#if chatAvUrl}
+                      <img class="chat-avatar-img" src={chatAvUrl} alt="" />
+                    {:else}
+                      {chatAvatarInitials(msg)}
+                    {/if}
+                  </div>
+                  <div class="chat-msg-col">
+                    <div class="chat-meta-row">
+                      <span class="chat-sender">{chatSenderLine(msg)}</span>
+                      <span class="chat-time font-mono">{formatChatTime(msg.timestamp)}</span>
+                    </div>
+                    <div class="chat-bubble">{msg.message}</div>
+                  </div>
+                </div>
+              {:else}
+                <div class="empty-state">No messages yet</div>
+              {/each}
+            </div>
+            <div class="chat-input-row">
+              <input
+                class="chat-input"
+                type="text"
+                placeholder="Broadcast..."
+                bind:value={chatInputVal}
+                onkeydown={handleChatKey}
+                disabled={sendingChat}
+              />
+              <button class="chat-send-btn" onclick={handleSendChat} disabled={sendingChat || !chatInputVal.trim()}>
+                <Send size={12} />
+              </button>
+            </div>
+          </div>
+        {/if}
+
+      </div>
+    {/if}
+
   </div>
 </div>
 
 <DashboardCustomizer />
 
 <style>
+  /* ─────────────────────────────────────────────────
+     DASHBOARD SHELL
+  ───────────────────────────────────────────────── */
   .dashboard {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: calc(12px * var(--mdt-scale));
-    padding: calc(18px * var(--mdt-scale)) calc(22px * var(--mdt-scale));
-    overflow-y: auto;
-    opacity: 0;
-    animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-
-  .dashboard.mounted {
-    opacity: 1;
-  }
-
-  /* ── Header ─────────────────────────────────────────── */
-  .dash-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: calc(12px * var(--mdt-scale));
-  }
-
-  .header-left {
-    display: flex;
-    align-items: center;
-    gap: calc(12px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .rank-badge {
-    display: flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    padding: calc(4px * var(--mdt-scale)) calc(9px * var(--mdt-scale));
-    background: var(--mdt-accent-dim);
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 20%, transparent);
-    border-radius: calc(20px * var(--mdt-scale));
-    color: var(--mdt-accent);
-    flex-shrink: 0;
-  }
-
-  .rank-badge :global(svg) {
-    width: calc(12px * var(--mdt-scale));
-    height: calc(12px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .rank-badge-text {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .header-identity {
-    display: flex;
-    flex-direction: column;
-    gap: calc(3px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .header-greeting {
-    font-size: calc(18px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text);
-    line-height: 1.2;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .header-greeting .accent {
-    color: var(--mdt-accent);
-  }
-
-  .header-meta {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-  }
-
-  .meta-chip {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
-  .rank-chip {
-    color: var(--mdt-text-dim);
-    font-weight: 500;
-  }
-
-  .callsign-chip {
-    color: var(--mdt-accent);
-    letter-spacing: 0.05em;
-  }
-
-  .meta-sep {
-    color: var(--mdt-border-2);
-    font-size: calc(10px * var(--mdt-scale));
-  }
-
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  /* ── Search ─────────────────────────────────────────── */
-  .search-wrap {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-  }
-
-  .search-icon-btn {
-    width: calc(34px * var(--mdt-scale));
-    height: calc(34px * var(--mdt-scale));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    color: var(--mdt-text-dim);
-    cursor: pointer;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-  }
-
-  .search-icon-btn :global(svg) {
-    width: calc(16px * var(--mdt-scale));
-    height: calc(16px * var(--mdt-scale));
-  }
-
-  .search-icon-btn:hover {
-    background: var(--mdt-surface-3);
-    color: var(--mdt-accent);
-    border-color: color-mix(in srgb, var(--mdt-accent) 30%, transparent);
-  }
-
-  .search-wrap.open {
-    background: var(--mdt-surface-2);
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 40%, transparent);
-    border-radius: var(--mdt-radius);
-    overflow: hidden;
-    animation: expandSearch 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-
-  @keyframes expandSearch {
-    from { width: calc(34px * var(--mdt-scale)); opacity: 0.5; }
-    to { width: calc(200px * var(--mdt-scale)); opacity: 1; }
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 0;
-    width: calc(160px * var(--mdt-scale));
-    padding: calc(7px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    background: transparent;
-    border: none;
-    color: var(--mdt-text);
-    font-family: 'Share Tech Mono', monospace;
-    font-size: calc(11px * var(--mdt-scale));
-    outline: none;
-    letter-spacing: 0.04em;
-  }
-
-  .search-input::placeholder {
-    color: var(--mdt-text-muted);
-  }
-
-  .search-close-btn {
-    width: calc(28px * var(--mdt-scale));
-    height: calc(28px * var(--mdt-scale));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: none;
-    border: none;
-    color: var(--mdt-text-muted);
-    cursor: pointer;
-    flex-shrink: 0;
-    margin-right: calc(3px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
-    transition: color 0.12s ease;
-  }
-
-  .search-close-btn :global(svg) {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-  }
-
-  .search-close-btn:hover {
-    color: var(--mdt-error);
-  }
-
-  /* ── Customize Button ───────────────────────────── */
-  .customize-btn {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(11px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    color: var(--mdt-text-muted);
-    cursor: pointer;
-    font-family: inherit;
-    font-size: calc(10.5px * var(--mdt-scale));
-    font-weight: 500;
-    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .customize-btn :global(svg) {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .customize-btn:hover {
-    background: var(--mdt-surface-3);
-    color: var(--mdt-accent);
-    border-color: color-mix(in srgb, var(--mdt-accent) 30%, transparent);
-  }
-
-  .customize-btn:active {
-    transform: scale(0.97);
-  }
-
-  .customize-btn-label {
-    white-space: nowrap;
-  }
-
-  /* ── Duty Pill ──────────────────────────────────────── */
-  .duty-status-pill {
-    display: flex;
-    align-items: center;
-    gap: calc(7px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: rgba(52, 211, 153, 0.07);
-    border: 1px solid rgba(52, 211, 153, 0.18);
-    border-radius: calc(20px * var(--mdt-scale));
-  }
-
-  .duty-dot {
-    width: calc(6px * var(--mdt-scale));
-    height: calc(6px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-success);
-    box-shadow: 0 0 calc(6px * var(--mdt-scale)) rgba(52, 211, 153, 0.6);
-    animation: pulseDuty 2s ease-in-out infinite;
-    flex-shrink: 0;
-  }
-
-  .duty-label {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-success);
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-
-  /* ── Announcements ──────────────────────────────────── */
-  .announcements-section {
-    display: flex;
-    flex-direction: column;
-    gap: calc(6px * var(--mdt-scale));
-    animation: cardIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .section-label {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-warning);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  .section-label :global(svg) {
-    width: calc(11px * var(--mdt-scale));
-    height: calc(11px * var(--mdt-scale));
-  }
-
-  .ann-list {
-    display: flex;
-    flex-direction: column;
-    gap: calc(4px * var(--mdt-scale));
-  }
-
-  .ann-item {
-    display: flex;
-    align-items: flex-start;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    background: rgba(251, 191, 36, 0.05);
-    border: 1px solid rgba(251, 191, 36, 0.12);
-    border-left: 2px solid rgba(251, 191, 36, 0.5);
-    border-radius: var(--mdt-radius);
-  }
-
-  .ann-icon-wrap {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    color: var(--mdt-warning);
-    opacity: 0.7;
-    flex-shrink: 0;
-    margin-top: calc(2px * var(--mdt-scale));
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .ann-icon-wrap :global(svg) {
     width: 100%;
     height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
+    overflow: hidden;
+    opacity: 0;
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    container-type: size;
+    container-name: dash;
   }
 
-  .ann-body {
+  .dashboard.mounted { opacity: 1; }
+
+  .dash-layout-only {
+    display: flex;
+    justify-content: flex-end;
+    flex-shrink: 0;
+    padding: 0 0 calc(4px * var(--mdt-scale));
+  }
+
+  .dash-layout-only-btn {
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-2);
+    border-radius: var(--mdt-radius-sm);
+    color: var(--mdt-text-dim);
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .dash-layout-only-btn :global(svg) {
+    width: calc(14px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
+  }
+
+  .dash-layout-only-btn:hover {
+    background: var(--mdt-surface-3);
+    color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 28%, var(--mdt-border));
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--mdt-text) 6%, transparent);
+  }
+
+  .dash-layout-only-btn:active {
+    transform: scale(0.96);
+  }
+
+  .dash-prelude-qa {
+    flex-shrink: 0;
+    min-width: 0;
+    /* opacity-only: fadeIn uses transform → traps position:fixed (Quick Actions modal) to this tiny box */
+    animation: preludeFade 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .dash-prelude-qa :global(.quick-actions-panel) {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  /* ── Bulletins prelude ─── */
+  .dash-prelude {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: calc(6px * var(--mdt-scale));
+    flex-shrink: 0;
+    align-items: stretch;
+    /* Grid bulletins need a bit more vertical room per tile (title + body) */
+    max-height: min(30cqh, calc(12.5rem * var(--mdt-scale)));
+    overflow: hidden;
+    animation: fadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .prelude-hrule {
+    height: 1px;
+    margin: calc(4px * var(--mdt-scale)) 0 calc(2px * var(--mdt-scale));
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--mdt-border) 8%,
+      var(--mdt-border) 92%,
+      transparent 100%
+    );
+    flex-shrink: 0;
+  }
+
+  .bulletins-block {
+    min-width: 0;
+    min-height: 0;
+    padding: calc(2px * var(--mdt-scale)) 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    overflow: hidden;
+  }
+
+  .bulletins-head {
+    margin: 0;
+  }
+
+  .bulletins-head-left {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    flex-wrap: wrap;
+  }
+
+  .bulletins-block :global(.bulletins-ico) {
+    color: var(--mdt-warning);
+    flex-shrink: 0;
+  }
+
+  .bulletins-title {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--mdt-text-dim);
+  }
+
+  .bulletins-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(200px * var(--mdt-scale))), 1fr));
+    gap: calc(8px * var(--mdt-scale));
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1;
+    align-content: start;
+  }
+
+  .bulletin-item {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: calc(3px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border-radius: calc(4px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    background: color-mix(in srgb, var(--mdt-surface-2) 88%, transparent);
+    font-size: calc(10px * var(--mdt-scale));
+    line-height: 1.35;
+  }
+
+  .bulletin-title {
+    font-weight: 600;
+    color: var(--mdt-text);
+    letter-spacing: 0.02em;
+  }
+
+  .bulletin-body {
+    margin: 0;
+    color: var(--mdt-text-dim);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+  }
+
+  .bulletins-empty {
+    margin: 0;
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    font-style: italic;
+  }
+
+  /* ── Stats strip (flat, ruled) ─── */
+  .stats-strip {
+    display: flex;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+    border-top: 1px solid transparent;
+  }
+
+  .stats-strip-hrule {
+    height: 1px;
+    margin: calc(4px * var(--mdt-scale)) 0 calc(2px * var(--mdt-scale));
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--mdt-border) 6%,
+      var(--mdt-border) 94%,
+      transparent
+    );
+  }
+
+  .stat-cell {
+    flex: 1 1 calc(25% - 1px);
+    min-width: calc(130px * var(--mdt-scale));
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    background: transparent;
+    border: none;
+    border-right: 1px solid var(--mdt-border);
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    transition: background 0.15s ease;
+    animation: cardIn 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+    animation-delay: var(--delay);
+  }
+
+  .stat-cell:last-child {
+    border-right: none;
+  }
+
+  .stat-cell:hover {
+    background: color-mix(in srgb, var(--cell-color) 6%, transparent);
+  }
+
+  .stat-cell:active {
+    transform: scale(0.96);
+  }
+
+  .stat-cell-ico {
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: calc(5px * var(--mdt-scale));
+    color: var(--mdt-bg);
+    background: var(--cell-color);
+    border-radius: calc(4px * var(--mdt-scale));
+    box-shadow:
+      0 calc(2px * var(--mdt-scale)) calc(12px * var(--mdt-scale)) color-mix(in srgb, var(--cell-color) 35%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  .stat-cell-ico :global(svg) {
+    width: calc(15px * var(--mdt-scale));
+    height: calc(15px * var(--mdt-scale));
+  }
+
+  .stat-cell-lines {
     display: flex;
     flex-direction: column;
     gap: calc(2px * var(--mdt-scale));
     min-width: 0;
   }
 
-  .ann-title {
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text);
-  }
-
-  .ann-content {
-    font-size: calc(10.5px * var(--mdt-scale));
-    color: var(--mdt-text-dim);
-    line-height: 1.45;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-
-  /* ── MOTD ───────────────────────────────────────────── */
-  .motd-card {
-    padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: var(--mdt-accent-dim);
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 18%, transparent);
-    border-left: 2px solid color-mix(in srgb, var(--mdt-accent) 50%, transparent);
-    border-radius: var(--mdt-radius);
-    display: flex;
-    flex-direction: column;
-    gap: calc(4px * var(--mdt-scale));
-    animation: cardIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
-  }
-
-  .motd-label {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    color: var(--mdt-accent);
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .motd-label :global(svg) {
-    width: calc(11px * var(--mdt-scale));
-    height: calc(11px * var(--mdt-scale));
-  }
-
-  .motd-text {
-    font-size: calc(12px * var(--mdt-scale));
-    color: var(--mdt-text-dim);
-    line-height: 1.5;
-  }
-
-  /* ── Stat Cards ─────────────────────────────────────── */
-  .stats-row {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: calc(8px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .stat-card {
-    position: relative;
-    display: flex;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    cursor: pointer;
-    transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
-    text-align: left;
-    font-family: inherit;
-    overflow: hidden;
-    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-    animation-delay: var(--delay);
-  }
-
-  .stat-card:hover {
-    background: var(--mdt-surface-3);
-    border-color: color-mix(in srgb, var(--card-color) 25%, var(--mdt-border));
-  }
-
-  .stat-card:active {
-    transform: scale(0.97);
-  }
-
-  .stat-bar {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    width: var(--bar-pct);
-    height: calc(2px * var(--mdt-scale));
-    background: var(--card-color);
-    opacity: 0.4;
-    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .stat-icon {
-    width: calc(28px * var(--mdt-scale));
-    height: calc(28px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
-    background: color-mix(in srgb, var(--card-color) 12%, transparent);
-    color: var(--card-color);
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .stat-info {
-    display: flex;
-    flex-direction: column;
-    gap: calc(1px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .stat-value {
+  .stat-cell-value {
     font-size: calc(18px * var(--mdt-scale));
     font-weight: 700;
     color: var(--mdt-text);
     line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
   }
 
-  .stat-label {
-    font-size: calc(10px * var(--mdt-scale));
+  .stat-cell-label {
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 600;
     color: var(--mdt-text-muted);
-    white-space: nowrap;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.08em;
   }
 
-  /* ── Main Grid ──────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────
+     MAIN GRID — fills remaining vertical space
+  ───────────────────────────────────────────────── */
   .main-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: calc(10px * var(--mdt-scale));
+    grid-template-columns: 1.15fr 1fr;
+    gap: 0 calc(12px * var(--mdt-scale));
     flex: 1;
     min-height: 0;
+    position: relative;
+    container-type: size;
+    container-name: dash-main;
+  }
+
+  .main-grid.empty { display: none; }
+
+  .main-grid.left-only,
+  .main-grid.right-only {
+    grid-template-columns: 1fr;
+  }
+
+  .main-grid:not(.left-only):not(.right-only) .col-right {
+    border-left: 1px solid var(--mdt-border);
+    padding-left: calc(16px * var(--mdt-scale));
+    margin-left: calc(2px * var(--mdt-scale));
   }
 
   .col {
     display: flex;
     flex-direction: column;
-    gap: calc(10px * var(--mdt-scale));
+    gap: 0;
     min-height: 0;
+    flex: 1;
+    overflow: hidden;
+    align-items: stretch;
   }
 
-  /* ── Panel ──────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────
+     Sections — no card chrome, rules only
+  ───────────────────────────────────────────────── */
   .panel {
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
+    background: transparent;
+    border: none;
+    border-radius: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
-    animation: cardIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+    flex: 0 1 auto;
+    min-height: 0;
+    margin-top: calc(6px * var(--mdt-scale));
+    padding-top: calc(6px * var(--mdt-scale));
+    border-top: 1px solid var(--mdt-border);
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
+  .panel:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+  }
+
+  /* Hug content; max-height + scroll when list is long (no flex-grow gap below last row) */
+  .dispatch-panel {
+    flex: 0 1 auto;
+    min-height: calc(9rem * var(--mdt-scale));
+    max-height: min(50cqh, 58%);
+    width: 100%;
+    align-self: stretch;
+  }
+
+  .reports-panel {
+    flex: 0 1 auto;
+    min-height: calc(4.5rem * var(--mdt-scale));
+    max-height: min(28cqh, 36%);
+  }
+
+  .bolos-panel {
+    flex: 0 1 auto;
+    max-height: min(24cqh, 32%);
+  }
+
+  .officers-panel {
+    flex: 0 1 34%;
+    min-height: calc(5rem * var(--mdt-scale));
+    max-height: min(40cqh, 44%);
+  }
+
+  .chat-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    width: 100%;
+    align-self: stretch;
+  }
+
+  /* ── Panel Header ─── */
   .panel-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border-bottom: 1px solid var(--mdt-border);
+    padding: 0 0 calc(5px * var(--mdt-scale));
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border-2) 70%, transparent);
     flex-shrink: 0;
-    background: var(--mdt-surface);
+    background: transparent;
+    gap: calc(8px * var(--mdt-scale));
   }
 
   .panel-title-row {
     display: flex;
     align-items: center;
-    gap: calc(7px * var(--mdt-scale));
+    gap: calc(8px * var(--mdt-scale));
+    flex-wrap: wrap;
   }
 
-  .panel-title-row :global(.panel-icon),
-  .panel-title-row :global(svg) {
+  /* Per-panel icon colors (semantic tying) */
+  .dispatch-panel .panel-title-row :global(svg) {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-error);
+    flex-shrink: 0;
+  }
+
+  .reports-panel .panel-title-row :global(svg) {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-warning);
+    flex-shrink: 0;
+  }
+
+  .bolos-panel .panel-title-row :global(svg) {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-warning);
+    flex-shrink: 0;
+  }
+
+  .officers-panel .panel-title-row :global(svg) {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-success);
+    flex-shrink: 0;
+  }
+
+  .chat-panel .panel-title-row :global(svg) {
     width: calc(13px * var(--mdt-scale));
     height: calc(13px * var(--mdt-scale));
     color: var(--mdt-accent);
@@ -986,15 +967,16 @@
   }
 
   .panel-title {
-    font-size: calc(11px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
     font-weight: 700;
     color: var(--mdt-text-dim);
     text-transform: uppercase;
     letter-spacing: 0.07em;
+    text-wrap: balance;
   }
 
   .see-all {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-accent);
     background: none;
     border: none;
@@ -1004,7 +986,7 @@
     padding: calc(2px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
     border-radius: var(--mdt-radius-sm);
     transition: background 0.15s ease;
-    opacity: 0.75;
+    opacity: 0.7;
   }
 
   .see-all:hover {
@@ -1012,65 +994,68 @@
     opacity: 1;
   }
 
-  /* ── Dispatch ───────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────
+     DISPATCH — full-height list
+  ───────────────────────────────────────────────── */
   .dispatch-list {
     display: flex;
     flex-direction: column;
+    flex: 1 1 auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    min-height: 0;
+    scrollbar-gutter: stable;
   }
 
   .dispatch-item {
     display: flex;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    flex-direction: column;
+    align-items: stretch;
+    gap: calc(4px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
     border-bottom: 1px solid var(--mdt-border);
-    position: relative;
     transition: background 0.12s ease;
   }
 
-  .dispatch-item:last-child {
-    border-bottom: none;
-  }
+  .dispatch-item:last-child { border-bottom: none; }
+  .dispatch-item:hover { background: var(--mdt-surface-3); }
 
-  .dispatch-item::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 20%;
-    bottom: 20%;
-    width: calc(2px * var(--mdt-scale));
-    background: var(--dispatch-color);
-    border-radius: 0 2px 2px 0;
-  }
-
-  .dispatch-item:hover {
-    background: var(--mdt-surface-3);
+  .dispatch-item-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: calc(8px * var(--mdt-scale));
   }
 
   .dispatch-code {
-    font-size: calc(11px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
     font-weight: 700;
     color: var(--dispatch-color);
     letter-spacing: 0.04em;
-    min-width: calc(42px * var(--mdt-scale));
+    font-family: 'Share Tech Mono', monospace;
+    line-height: 1.2;
     flex-shrink: 0;
   }
 
-  .dispatch-body {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
-  }
-
   .dispatch-desc {
-    font-size: calc(11.5px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     color: var(--mdt-text);
     font-weight: 500;
-    white-space: nowrap;
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
+  }
+
+  .dispatch-loc {
+    font-size: calc(9px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .dispatch-meta {
@@ -1080,40 +1065,50 @@
   }
 
   .dispatch-unit {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-accent);
-    letter-spacing: 0.04em;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.03em;
   }
 
   .dispatch-dot-sep {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-border-2);
   }
 
   .dispatch-time {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-text-muted);
   }
 
-  .dispatch-status-dot {
-    width: calc(6px * var(--mdt-scale));
-    height: calc(6px * var(--mdt-scale));
-    border-radius: 50%;
+  .dispatch-status-text {
+    font-size: calc(8px * var(--mdt-scale));
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     flex-shrink: 0;
-    opacity: 0.8;
+    max-width: 55%;
+    text-align: right;
+    line-height: 1.2;
+    white-space: normal;
   }
 
-  /* ── Reports ────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────
+     REPORTS — full-height list
+  ───────────────────────────────────────────────── */
   .reports-list {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
   }
 
   .report-item {
     display: flex;
     align-items: center;
     gap: calc(10px * var(--mdt-scale));
-    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     border-bottom: 1px solid var(--mdt-border);
     background: none;
     border-left: none;
@@ -1124,20 +1119,17 @@
     font-family: inherit;
     text-align: left;
     transition: background 0.12s ease;
+    width: 100%;
   }
 
-  .report-item:last-child {
-    border-bottom: none;
-  }
-
-  .report-item:hover {
-    background: var(--mdt-surface-3);
-  }
+  .report-item:last-child { border-bottom: none; }
+  .report-item:hover { background: var(--mdt-surface-3); }
 
   .report-number {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-text-muted);
-    letter-spacing: 0.04em;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.03em;
     min-width: calc(36px * var(--mdt-scale));
     flex-shrink: 0;
   }
@@ -1151,7 +1143,7 @@
   }
 
   .report-title {
-    font-size: calc(11.5px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     font-weight: 500;
     color: var(--mdt-text);
     white-space: nowrap;
@@ -1160,69 +1152,43 @@
   }
 
   .report-author {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-text-muted);
   }
 
-  .report-status-badge {
-    font-size: calc(9px * var(--mdt-scale));
+  .report-status-text {
+    font-size: calc(8px * var(--mdt-scale));
     font-weight: 700;
     letter-spacing: 0.05em;
     text-transform: uppercase;
-    padding: calc(2px * var(--mdt-scale)) calc(7px * var(--mdt-scale));
-    border-radius: calc(20px * var(--mdt-scale));
-    border: 1px solid;
+    color: var(--status-color);
     flex-shrink: 0;
     white-space: nowrap;
   }
 
-  /* ── BOLOs ──────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────
+     BOLOs — full-height list
+  ───────────────────────────────────────────────── */
   .bolo-list {
     display: flex;
     flex-direction: column;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
   }
 
   .bolo-item {
     display: flex;
     align-items: center;
     gap: calc(10px * var(--mdt-scale));
-    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     border-bottom: 1px solid var(--mdt-border);
+    transition: background 0.12s ease;
+    cursor: default;
   }
 
-  .bolo-item:last-child {
-    border-bottom: none;
-  }
-
-  .bolo-type {
-    width: calc(26px * var(--mdt-scale));
-    height: calc(26px * var(--mdt-scale));
-    flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: var(--mdt-radius-sm);
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 800;
-    background: var(--mdt-surface-3);
-    color: var(--mdt-text-muted);
-    text-transform: uppercase;
-  }
-
-  .bolo-type.person {
-    background: rgba(251, 191, 36, 0.12);
-    color: var(--mdt-warning);
-  }
-
-  .bolo-type.vehicle {
-    background: rgba(96, 165, 250, 0.12);
-    color: #60a5fa;
-  }
-
-  .bolo-type.weapon {
-    background: rgba(248, 113, 113, 0.12);
-    color: var(--mdt-error);
-  }
+  .bolo-item:last-child { border-bottom: none; }
+  .bolo-item:hover { background: var(--mdt-surface-3); }
 
   .bolo-info {
     flex: 1;
@@ -1233,7 +1199,7 @@
   }
 
   .bolo-title {
-    font-size: calc(11.5px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     font-weight: 500;
     color: var(--mdt-text);
     white-space: nowrap;
@@ -1242,47 +1208,61 @@
   }
 
   .bolo-meta {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     text-transform: capitalize;
   }
 
-  /* ── Officer List ───────────────────────────────────── */
-  .officer-panel {
-    flex-shrink: 0;
+  .bolo-item :global(.bolo-arrow) {
+    width: calc(12px * var(--mdt-scale));
+    height: calc(12px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    opacity: 0;
+    transition: opacity 0.12s ease;
   }
 
+  .bolo-item:hover :global(.bolo-arrow) { opacity: 1; }
+
+  /* ─────────────────────────────────────────────────
+     OFFICERS — compact with scroll
+  ───────────────────────────────────────────────── */
   .officer-list {
     display: flex;
     flex-direction: column;
-    max-height: calc(180px * var(--mdt-scale));
     overflow-y: auto;
+    flex: 1;
+    min-height: 0;
   }
 
   .officer-row {
     display: flex;
     align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    padding: calc(7px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale));
+    padding: calc(9px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     border-bottom: 1px solid var(--mdt-border);
     transition: background 0.12s ease;
   }
 
-  .officer-row:last-child {
-    border-bottom: none;
-  }
-
-  .officer-row:hover {
-    background: var(--mdt-surface-3);
-  }
+  .officer-row:last-child { border-bottom: none; }
+  .officer-row:hover { background: var(--mdt-surface-3); }
 
   .ofc-callsign {
     font-size: calc(10px * var(--mdt-scale));
     font-weight: 700;
-    color: var(--mdt-accent);
-    letter-spacing: 0.04em;
+    color: var(--mdt-success);
+    letter-spacing: 0.03em;
+    font-family: 'Share Tech Mono', monospace;
     min-width: calc(48px * var(--mdt-scale));
     flex-shrink: 0;
+  }
+
+  .ofc-avatar {
+    width: calc(22px * var(--mdt-scale));
+    height: calc(22px * var(--mdt-scale));
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+    border: 1px solid var(--mdt-border);
   }
 
   .ofc-info {
@@ -1294,7 +1274,7 @@
   }
 
   .ofc-name {
-    font-size: calc(11.5px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     font-weight: 500;
     color: var(--mdt-text);
     white-space: nowrap;
@@ -1303,7 +1283,7 @@
   }
 
   .ofc-rank {
-    font-size: calc(9.5px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     white-space: nowrap;
   }
@@ -1315,7 +1295,7 @@
     flex-shrink: 0;
   }
 
-  .ofc-status-dot {
+  .ofc-dot {
     width: calc(6px * var(--mdt-scale));
     height: calc(6px * var(--mdt-scale));
     border-radius: 50%;
@@ -1323,110 +1303,147 @@
   }
 
   .ofc-status-label {
-    font-size: calc(9.5px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
     font-weight: 600;
-    letter-spacing: 0.03em;
-    text-transform: uppercase;
-  }
-
-  .officer-count-badge {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-success);
-    background: rgba(52, 211, 153, 0.1);
-    border: 1px solid rgba(52, 211, 153, 0.2);
-    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(20px * var(--mdt-scale));
-    font-family: 'Share Tech Mono', monospace;
     letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ofc-color);
   }
 
-  /* ── Officer Chat ───────────────────────────────────── */
-  .chat-panel {
-    flex: 1;
-    min-height: calc(200px * var(--mdt-scale));
-  }
-
-  .live-badge {
-    display: flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
+  .officer-count {
     font-size: calc(9px * var(--mdt-scale));
     font-weight: 700;
     color: var(--mdt-success);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.03em;
   }
 
-  .live-dot {
-    width: calc(6px * var(--mdt-scale));
-    height: calc(6px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-success);
-    animation: pulseDuty 1.5s ease-in-out infinite;
-  }
-
+  /* ─────────────────────────────────────────────────
+     CHAT — fills remaining right-column height
+  ───────────────────────────────────────────────── */
   .chat-messages {
     flex: 1;
     overflow-y: auto;
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
     display: flex;
     flex-direction: column;
-    gap: calc(8px * var(--mdt-scale));
-    max-height: calc(200px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale));
+    min-height: 0;
   }
 
   .chat-msg {
     display: flex;
-    flex-direction: column;
-    gap: calc(3px * var(--mdt-scale));
+    flex-direction: row;
+    align-items: flex-end;
+    gap: calc(8px * var(--mdt-scale));
+    max-width: 100%;
   }
 
-  .chat-msg.mine .chat-bubble {
-    background: color-mix(in srgb, var(--mdt-accent) 10%, var(--mdt-surface-3));
-    border-color: color-mix(in srgb, var(--mdt-accent) 20%, transparent);
-    color: var(--mdt-text);
+  .chat-msg.mine {
+    flex-direction: row-reverse;
+    justify-content: flex-start;
   }
 
-  .chat-msg-meta {
+  .chat-avatar {
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
+    flex-shrink: 0;
     display: flex;
     align-items: center;
-    gap: calc(5px * var(--mdt-scale));
+    justify-content: center;
+    border-radius: 50%;
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    border: 1px solid var(--mdt-border);
+    background: color-mix(
+      in hsl,
+      hsl(var(--chat-av-h, 210) 38% 46%) 78%,
+      var(--mdt-surface-3)
+    );
+    color: rgba(248, 250, 252, 0.96);
+    box-shadow: 0 calc(1px * var(--mdt-scale)) calc(6px * var(--mdt-scale)) rgba(0, 0, 0, 0.35);
   }
 
-  .chat-callsign {
-    font-size: calc(10px * var(--mdt-scale));
+  .chat-avatar-img-wrap {
+    padding: 0;
+    overflow: hidden;
+    background: var(--mdt-surface-3);
+  }
+
+  .chat-avatar-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border-radius: 50%;
+  }
+
+  .chat-msg.mine .chat-avatar {
+    background: color-mix(in srgb, var(--mdt-accent) 72%, var(--mdt-surface-3));
+    border-color: color-mix(in srgb, var(--mdt-accent) 45%, transparent);
+    color: rgba(248, 250, 252, 0.96);
+  }
+
+  .chat-msg-col {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: calc(3px * var(--mdt-scale));
+    min-width: 0;
+    max-width: calc(100% - calc(30px * var(--mdt-scale)) - calc(8px * var(--mdt-scale)));
+  }
+
+  .chat-msg.mine .chat-msg-col {
+    align-items: flex-end;
+  }
+
+  .chat-meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: calc(6px * var(--mdt-scale));
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .chat-msg.mine .chat-meta-row {
+    flex-direction: row-reverse;
+    justify-content: flex-end;
+  }
+
+  .chat-sender {
+    font-size: calc(9px * var(--mdt-scale));
     font-weight: 700;
-    color: var(--mdt-accent);
     letter-spacing: 0.04em;
+    line-height: 1.25;
+    color: color-mix(in srgb, var(--mdt-error) 82%, var(--mdt-text));
   }
 
-  .chat-rank {
-    font-size: calc(9.5px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
-  .chat-name {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-text-dim);
-    font-weight: 500;
+  .chat-msg.mine .chat-sender {
+    color: var(--mdt-accent);
   }
 
   .chat-time {
-    font-size: calc(9px * var(--mdt-scale));
+    font-size: calc(8px * var(--mdt-scale));
     color: var(--mdt-text-muted);
-    margin-left: auto;
-    letter-spacing: 0.04em;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 0.02em;
+    flex-shrink: 0;
   }
 
   .chat-bubble {
-    padding: calc(7px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface-3);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius-sm);
-    font-size: calc(11.5px * var(--mdt-scale));
-    color: var(--mdt-text-dim);
+    width: fit-content;
+    max-width: 100%;
+    padding: calc(7px * var(--mdt-scale)) calc(11px * var(--mdt-scale));
+    background: var(--mdt-accent);
+    border: 1px solid color-mix(in srgb, var(--mdt-bg) 18%, transparent);
+    border-radius: calc(4px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-bg);
     line-height: 1.45;
+    word-wrap: break-word;
   }
 
   .chat-input-row {
@@ -1446,27 +1463,18 @@
     border-radius: var(--mdt-radius-sm);
     color: var(--mdt-text);
     font-family: 'Outfit', sans-serif;
-    font-size: calc(12px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
     outline: none;
     transition: border-color 0.15s ease;
   }
 
-  .chat-input::placeholder {
-    color: var(--mdt-text-muted);
-  }
-
-  .chat-input:focus {
-    border-color: color-mix(in srgb, var(--mdt-accent) 40%, transparent);
-  }
-
-  .chat-input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
+  .chat-input::placeholder { color: var(--mdt-text-muted); }
+  .chat-input:focus { border-color: color-mix(in srgb, var(--mdt-accent) 35%, transparent); }
+  .chat-input:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .chat-send-btn {
-    width: calc(32px * var(--mdt-scale));
-    height: calc(32px * var(--mdt-scale));
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1476,57 +1484,91 @@
     border-radius: var(--mdt-radius-sm);
     color: var(--mdt-bg);
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
+    transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease;
   }
 
   .chat-send-btn :global(svg) {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
+    width: calc(12px * var(--mdt-scale));
+    height: calc(12px * var(--mdt-scale));
   }
 
-  .chat-send-btn:hover:not(:disabled) {
-    opacity: 0.88;
+  .chat-send-btn:hover:not(:disabled) { opacity: 0.85; }
+  .chat-send-btn:active:not(:disabled) { transform: scale(0.96); }
+  .chat-send-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── Live Indicator ─── */
+  .live-indicator {
+    display: flex;
+    align-items: center;
+    gap: calc(4px * var(--mdt-scale));
+    font-size: calc(8px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--mdt-success);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 
-  .chat-send-btn:active:not(:disabled) {
-    transform: scale(0.94);
+  .live-dot {
+    width: calc(5px * var(--mdt-scale));
+    height: calc(5px * var(--mdt-scale));
+    border-radius: 50%;
+    background: var(--mdt-success);
+    animation: dutyPulse 1.5s ease-in-out infinite;
   }
 
-  .chat-send-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-  }
-
-  /* ── Empty state ────────────────────────────────────── */
+  /* ── Empty State ─── */
   .empty-state {
-    padding: calc(16px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
     text-align: center;
-    font-size: calc(11px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-muted);
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
-  .chat-empty {
-    padding: calc(24px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+  /* ── Scrollbars inside panels ─── */
+  .dispatch-list::-webkit-scrollbar,
+  .reports-list::-webkit-scrollbar,
+  .bolo-list::-webkit-scrollbar,
+  .officer-list::-webkit-scrollbar,
+  .chat-messages::-webkit-scrollbar {
+    width: calc(3px * var(--mdt-scale));
   }
 
-  /* ── Keyframes ──────────────────────────────────────── */
+  .dispatch-list::-webkit-scrollbar-thumb,
+  .reports-list::-webkit-scrollbar-thumb,
+  .bolo-list::-webkit-scrollbar-thumb,
+  .officer-list::-webkit-scrollbar-thumb,
+  .chat-messages::-webkit-scrollbar-thumb {
+    background: var(--mdt-border-2);
+    border-radius: 2px;
+  }
+
+  /* ── Keyframes ─── */
+  @keyframes preludeFade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(calc(6px * var(--mdt-scale))); }
+    from { opacity: 0; transform: translateY(calc(4px * var(--mdt-scale))); }
     to { opacity: 1; transform: translateY(0); }
   }
 
   @keyframes cardIn {
-    from { opacity: 0; transform: translateY(calc(6px * var(--mdt-scale))); }
+    from { opacity: 0; transform: translateY(calc(4px * var(--mdt-scale))); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  @keyframes pulseDuty {
-    0%, 100% { opacity: 1; box-shadow: 0 0 calc(6px * var(--mdt-scale)) rgba(52, 211, 153, 0.6); }
-    50% { opacity: 0.55; box-shadow: 0 0 calc(3px * var(--mdt-scale)) rgba(52, 211, 153, 0.3); }
+  @keyframes dutyPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
   }
 
-  @keyframes emergDot {
-    0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(248,113,113,0.8); }
-    50% { opacity: 0.4; box-shadow: none; }
+  @keyframes emergPulse {
+    0%, 100% { opacity: 1; box-shadow: 0 0 5px rgba(248,113,113,0.7); }
+    50% { opacity: 0.5; box-shadow: none; }
   }
 </style>

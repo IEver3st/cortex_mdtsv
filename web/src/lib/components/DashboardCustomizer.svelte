@@ -1,6 +1,6 @@
 <script>
   import { dashboardLayout, WIDGET_DEFS } from '../stores/dashboardLayout.svelte.js';
-  import { LayoutDashboard, Eye, EyeOff, RotateCcw, X, Check, Grip } from 'lucide-svelte';
+  import { LayoutDashboard, Eye, EyeOff, RotateCcw, X, Check, Grip } from '@lucide/svelte';
 
   let layout = dashboardLayout;
 

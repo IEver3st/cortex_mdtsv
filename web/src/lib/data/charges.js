@@ -1,0 +1,147 @@
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toText(value, fallback = '') {
+  const text = value == null ? '' : String(value).trim();
+  return text === '' ? fallback : text;
+}
+
+export function normalizeChargeRecord(charge = {}) {
+  const normalized = {
+    ...charge,
+    id: toNumber(charge.id, 0),
+    charge: toText(charge.charge),
+    category: toText(charge.category, 'other'),
+    severity: toText(charge.severity, 'infraction'),
+    fine: toNumber(charge.fine, 0),
+    jailTime: toNumber(charge.jailTime, 0),
+    maxJail: toNumber(charge.maxJail, 0),
+    points: toNumber(charge.points, 0),
+    stackable: Boolean(charge.stackable),
+    requiresEvidence: Boolean(charge.requiresEvidence),
+  };
+
+  if (normalized.maxJail < normalized.jailTime) {
+    normalized.maxJail = normalized.jailTime;
+  }
+
+  return normalized;
+}
+
+export function normalizeChargesList(charges) {
+  if (!Array.isArray(charges) || charges.length === 0) {
+    return DEFAULT_CHARGES.map((charge) => ({ ...charge }));
+  }
+
+  return charges.map((charge) => normalizeChargeRecord(charge));
+}
+
+export function applyChargePatch(charges, patch = {}) {
+  const chargeId = toNumber(patch.chargeId ?? patch.id, 0);
+  const nextFine = toNumber(patch.fine, 0);
+  const nextJailTime = toNumber(patch.jailTime, 0);
+  const nextMaxJail = Math.max(nextJailTime, toNumber(patch.maxJail, 0));
+
+  return normalizeChargesList(charges).map((charge) => {
+    if (charge.id !== chargeId) {
+      return charge;
+    }
+
+    return normalizeChargeRecord({
+      ...charge,
+      fine: nextFine,
+      jailTime: nextJailTime,
+      maxJail: nextMaxJail,
+    });
+  });
+}
+
+export const DEFAULT_CHARGES = [
+  { id: 1, charge: 'Speeding (1–15 over)', category: 'traffic', severity: 'infraction', fine: 150, jailTime: 0, maxJail: 0, points: 1, stackable: true, requiresEvidence: false },
+  { id: 2, charge: 'Speeding (16–25 over)', category: 'traffic', severity: 'infraction', fine: 300, jailTime: 0, maxJail: 0, points: 2, stackable: true, requiresEvidence: false },
+  { id: 3, charge: 'Speeding (26+ over)', category: 'traffic', severity: 'misdemeanor', fine: 600, jailTime: 5, maxJail: 10, points: 4, stackable: true, requiresEvidence: false },
+  { id: 4, charge: 'Reckless Driving', category: 'traffic', severity: 'misdemeanor', fine: 750, jailTime: 10, maxJail: 20, points: 6, stackable: false, requiresEvidence: false },
+  { id: 5, charge: 'Street Racing', category: 'traffic', severity: 'misdemeanor', fine: 1500, jailTime: 15, maxJail: 30, points: 6, stackable: false, requiresEvidence: false },
+  { id: 6, charge: 'Hit and Run (Property)', category: 'traffic', severity: 'misdemeanor', fine: 1000, jailTime: 10, maxJail: 20, points: 4, stackable: false, requiresEvidence: false },
+  { id: 7, charge: 'Hit and Run (Injury)', category: 'traffic', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 8, stackable: false, requiresEvidence: true },
+  { id: 8, charge: 'Evading Police', category: 'traffic', severity: 'felony', fine: 2500, jailTime: 25, maxJail: 50, points: 6, stackable: false, requiresEvidence: false },
+  { id: 9, charge: 'DUI', category: 'traffic', severity: 'misdemeanor', fine: 1200, jailTime: 15, maxJail: 30, points: 8, stackable: false, requiresEvidence: true },
+  { id: 10, charge: 'DUI Causing Injury', category: 'traffic', severity: 'felony', fine: 4000, jailTime: 40, maxJail: 80, points: 10, stackable: false, requiresEvidence: true },
+  { id: 11, charge: 'Driving Without License', category: 'traffic', severity: 'infraction', fine: 500, jailTime: 0, maxJail: 0, points: 2, stackable: false, requiresEvidence: false },
+  { id: 12, charge: 'Driving on Suspended License', category: 'traffic', severity: 'misdemeanor', fine: 800, jailTime: 10, maxJail: 15, points: 4, stackable: false, requiresEvidence: false },
+  { id: 13, charge: 'Failure to Yield', category: 'traffic', severity: 'infraction', fine: 200, jailTime: 0, maxJail: 0, points: 1, stackable: true, requiresEvidence: false },
+  { id: 14, charge: 'Running a Red Light', category: 'traffic', severity: 'infraction', fine: 250, jailTime: 0, maxJail: 0, points: 2, stackable: true, requiresEvidence: false },
+  { id: 15, charge: 'Illegal U-Turn', category: 'traffic', severity: 'infraction', fine: 150, jailTime: 0, maxJail: 0, points: 1, stackable: true, requiresEvidence: false },
+  { id: 16, charge: 'Wrong Way Driving', category: 'traffic', severity: 'misdemeanor', fine: 400, jailTime: 5, maxJail: 10, points: 3, stackable: false, requiresEvidence: false },
+  { id: 17, charge: 'Failure to Stop for LEO', category: 'traffic', severity: 'misdemeanor', fine: 500, jailTime: 10, maxJail: 15, points: 4, stackable: false, requiresEvidence: false },
+  { id: 18, charge: 'Vehicular Manslaughter', category: 'traffic', severity: 'felony', fine: 8000, jailTime: 60, maxJail: 120, points: 10, stackable: false, requiresEvidence: true },
+  { id: 19, charge: 'Expired Registration', category: 'traffic', severity: 'infraction', fine: 150, jailTime: 0, maxJail: 0, points: 0, stackable: false, requiresEvidence: false },
+  { id: 20, charge: 'Disorderly Conduct', category: 'public_order', severity: 'infraction', fine: 250, jailTime: 0, maxJail: 5, points: 0, stackable: true, requiresEvidence: false },
+  { id: 21, charge: 'Public Intoxication', category: 'public_order', severity: 'infraction', fine: 200, jailTime: 0, maxJail: 5, points: 0, stackable: true, requiresEvidence: false },
+  { id: 22, charge: 'Trespassing', category: 'public_order', severity: 'misdemeanor', fine: 500, jailTime: 10, maxJail: 15, points: 0, stackable: false, requiresEvidence: false },
+  { id: 23, charge: 'Resisting Arrest', category: 'public_order', severity: 'misdemeanor', fine: 800, jailTime: 15, maxJail: 25, points: 0, stackable: false, requiresEvidence: false },
+  { id: 24, charge: 'Obstruction of Justice', category: 'public_order', severity: 'misdemeanor', fine: 1000, jailTime: 15, maxJail: 30, points: 0, stackable: false, requiresEvidence: false },
+  { id: 25, charge: 'Failure to Identify', category: 'public_order', severity: 'infraction', fine: 300, jailTime: 5, maxJail: 10, points: 0, stackable: false, requiresEvidence: false },
+  { id: 26, charge: 'Loitering', category: 'public_order', severity: 'infraction', fine: 100, jailTime: 0, maxJail: 0, points: 0, stackable: true, requiresEvidence: false },
+  { id: 27, charge: 'Petty Theft', category: 'property', severity: 'misdemeanor', fine: 500, jailTime: 10, maxJail: 15, points: 0, stackable: true, requiresEvidence: false },
+  { id: 28, charge: 'Grand Theft', category: 'property', severity: 'felony', fine: 2000, jailTime: 25, maxJail: 50, points: 0, stackable: true, requiresEvidence: true },
+  { id: 29, charge: 'Grand Theft Auto', category: 'property', severity: 'felony', fine: 3500, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: false },
+  { id: 30, charge: 'Burglary', category: 'property', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 31, charge: 'Robbery', category: 'property', severity: 'felony', fine: 4000, jailTime: 40, maxJail: 80, points: 0, stackable: false, requiresEvidence: true },
+  { id: 32, charge: 'Armed Robbery', category: 'property', severity: 'felony', fine: 6000, jailTime: 60, maxJail: 120, points: 0, stackable: false, requiresEvidence: true },
+  { id: 33, charge: 'Shoplifting', category: 'property', severity: 'misdemeanor', fine: 300, jailTime: 5, maxJail: 10, points: 0, stackable: true, requiresEvidence: false },
+  { id: 34, charge: 'Vandalism', category: 'property', severity: 'misdemeanor', fine: 750, jailTime: 10, maxJail: 20, points: 0, stackable: false, requiresEvidence: false },
+  { id: 35, charge: 'Arson', category: 'property', severity: 'felony', fine: 5000, jailTime: 50, maxJail: 100, points: 0, stackable: false, requiresEvidence: true },
+  { id: 36, charge: 'Receiving Stolen Property', category: 'property', severity: 'misdemeanor', fine: 1000, jailTime: 15, maxJail: 30, points: 0, stackable: false, requiresEvidence: true },
+  { id: 37, charge: 'Criminal Mischief', category: 'property', severity: 'misdemeanor', fine: 500, jailTime: 10, maxJail: 15, points: 0, stackable: false, requiresEvidence: false },
+  { id: 38, charge: 'Simple Assault', category: 'violent', severity: 'misdemeanor', fine: 1000, jailTime: 15, maxJail: 30, points: 0, stackable: true, requiresEvidence: false },
+  { id: 39, charge: 'Aggravated Assault', category: 'violent', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 40, charge: 'Battery', category: 'violent', severity: 'misdemeanor', fine: 1500, jailTime: 20, maxJail: 40, points: 0, stackable: true, requiresEvidence: false },
+  { id: 41, charge: 'Assault with Deadly Weapon', category: 'violent', severity: 'felony', fine: 5000, jailTime: 45, maxJail: 90, points: 0, stackable: false, requiresEvidence: true },
+  { id: 42, charge: 'Attempted Murder', category: 'violent', severity: 'felony', fine: 10000, jailTime: 90, maxJail: 180, points: 0, stackable: false, requiresEvidence: true },
+  { id: 43, charge: 'Murder (First Degree)', category: 'violent', severity: 'felony', fine: 15000, jailTime: 120, maxJail: 240, points: 0, stackable: false, requiresEvidence: true },
+  { id: 44, charge: 'Murder (Second Degree)', category: 'violent', severity: 'felony', fine: 12000, jailTime: 90, maxJail: 180, points: 0, stackable: false, requiresEvidence: true },
+  { id: 45, charge: 'Manslaughter', category: 'violent', severity: 'felony', fine: 8000, jailTime: 60, maxJail: 120, points: 0, stackable: false, requiresEvidence: true },
+  { id: 46, charge: 'Kidnapping', category: 'violent', severity: 'felony', fine: 7000, jailTime: 60, maxJail: 120, points: 0, stackable: false, requiresEvidence: true },
+  { id: 47, charge: 'Hostage Taking', category: 'violent', severity: 'felony', fine: 10000, jailTime: 80, maxJail: 160, points: 0, stackable: false, requiresEvidence: true },
+  { id: 48, charge: 'Domestic Violence', category: 'violent', severity: 'misdemeanor', fine: 2000, jailTime: 20, maxJail: 40, points: 0, stackable: false, requiresEvidence: false },
+  { id: 49, charge: 'Criminal Threats', category: 'violent', severity: 'misdemeanor', fine: 1200, jailTime: 15, maxJail: 25, points: 0, stackable: false, requiresEvidence: false },
+  { id: 50, charge: 'Stalking', category: 'violent', severity: 'misdemeanor', fine: 1500, jailTime: 15, maxJail: 30, points: 0, stackable: false, requiresEvidence: true },
+  { id: 51, charge: 'Unlawful Firearm Possession', category: 'weapons', severity: 'felony', fine: 3000, jailTime: 25, maxJail: 50, points: 0, stackable: false, requiresEvidence: true },
+  { id: 52, charge: 'Prohibited Weapon Possession', category: 'weapons', severity: 'felony', fine: 5000, jailTime: 40, maxJail: 80, points: 0, stackable: false, requiresEvidence: true },
+  { id: 53, charge: 'Brandishing a Weapon', category: 'weapons', severity: 'misdemeanor', fine: 1500, jailTime: 15, maxJail: 30, points: 0, stackable: false, requiresEvidence: false },
+  { id: 54, charge: 'Illegal Firearm Discharge', category: 'weapons', severity: 'felony', fine: 2500, jailTime: 20, maxJail: 40, points: 0, stackable: false, requiresEvidence: false },
+  { id: 55, charge: 'Concealed Carry Violation', category: 'weapons', severity: 'misdemeanor', fine: 1000, jailTime: 10, maxJail: 20, points: 0, stackable: false, requiresEvidence: true },
+  { id: 56, charge: 'Weapons Trafficking', category: 'weapons', severity: 'felony', fine: 10000, jailTime: 80, maxJail: 160, points: 0, stackable: false, requiresEvidence: true },
+  { id: 57, charge: 'Firearm Enhancement', category: 'weapons', severity: 'felony', fine: 2000, jailTime: 15, maxJail: 30, points: 0, stackable: true, requiresEvidence: false },
+  { id: 58, charge: 'Drug Possession (Personal)', category: 'drugs', severity: 'misdemeanor', fine: 500, jailTime: 10, maxJail: 15, points: 0, stackable: false, requiresEvidence: true },
+  { id: 59, charge: 'Drug Possession w/ Intent', category: 'drugs', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 60, charge: 'Drug Distribution', category: 'drugs', severity: 'felony', fine: 5000, jailTime: 45, maxJail: 90, points: 0, stackable: false, requiresEvidence: true },
+  { id: 61, charge: 'Drug Trafficking', category: 'drugs', severity: 'felony', fine: 10000, jailTime: 80, maxJail: 160, points: 0, stackable: false, requiresEvidence: true },
+  { id: 62, charge: 'Drug Manufacturing', category: 'drugs', severity: 'felony', fine: 8000, jailTime: 60, maxJail: 120, points: 0, stackable: false, requiresEvidence: true },
+  { id: 63, charge: 'Paraphernalia Possession', category: 'drugs', severity: 'infraction', fine: 200, jailTime: 0, maxJail: 5, points: 0, stackable: false, requiresEvidence: true },
+  { id: 64, charge: 'Under the Influence', category: 'drugs', severity: 'misdemeanor', fine: 750, jailTime: 10, maxJail: 15, points: 0, stackable: false, requiresEvidence: false },
+  { id: 65, charge: 'Impersonating an Officer', category: 'government', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 66, charge: 'Bribery', category: 'government', severity: 'felony', fine: 5000, jailTime: 40, maxJail: 80, points: 0, stackable: false, requiresEvidence: true },
+  { id: 67, charge: 'Escape from Custody', category: 'government', severity: 'felony', fine: 2500, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: false },
+  { id: 68, charge: 'Tampering with Evidence', category: 'government', severity: 'felony', fine: 4000, jailTime: 35, maxJail: 70, points: 0, stackable: false, requiresEvidence: true },
+  { id: 69, charge: 'Perjury', category: 'government', severity: 'felony', fine: 3000, jailTime: 25, maxJail: 50, points: 0, stackable: false, requiresEvidence: true },
+  { id: 70, charge: 'Contempt of Court', category: 'government', severity: 'misdemeanor', fine: 1500, jailTime: 15, maxJail: 30, points: 0, stackable: false, requiresEvidence: false },
+  { id: 71, charge: 'Filing False Report', category: 'government', severity: 'misdemeanor', fine: 1000, jailTime: 10, maxJail: 20, points: 0, stackable: false, requiresEvidence: false },
+  { id: 72, charge: 'Identity Theft', category: 'fraud', severity: 'felony', fine: 4000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 73, charge: 'Forgery', category: 'fraud', severity: 'felony', fine: 3000, jailTime: 25, maxJail: 50, points: 0, stackable: false, requiresEvidence: true },
+  { id: 74, charge: 'Fraud', category: 'fraud', severity: 'felony', fine: 5000, jailTime: 35, maxJail: 70, points: 0, stackable: false, requiresEvidence: true },
+  { id: 75, charge: 'Money Laundering', category: 'fraud', severity: 'felony', fine: 10000, jailTime: 60, maxJail: 120, points: 0, stackable: false, requiresEvidence: true },
+  { id: 76, charge: 'Insurance Fraud', category: 'fraud', severity: 'felony', fine: 4000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 77, charge: 'Tax Evasion', category: 'fraud', severity: 'felony', fine: 6000, jailTime: 40, maxJail: 80, points: 0, stackable: false, requiresEvidence: true },
+  { id: 78, charge: 'Conspiracy', category: 'other', severity: 'felony', fine: 3000, jailTime: 25, maxJail: 50, points: 0, stackable: false, requiresEvidence: true },
+  { id: 79, charge: 'Probation Violation', category: 'other', severity: 'misdemeanor', fine: 1000, jailTime: 20, maxJail: 40, points: 0, stackable: false, requiresEvidence: false },
+  { id: 80, charge: 'Parole Violation', category: 'other', severity: 'felony', fine: 1500, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: false },
+  { id: 81, charge: 'Accessory to a Crime', category: 'other', severity: 'misdemeanor', fine: 2000, jailTime: 20, maxJail: 40, points: 0, stackable: false, requiresEvidence: true },
+  { id: 82, charge: 'Aiding and Abetting', category: 'other', severity: 'felony', fine: 3000, jailTime: 30, maxJail: 60, points: 0, stackable: false, requiresEvidence: true },
+  { id: 83, charge: 'Solicitation', category: 'other', severity: 'misdemeanor', fine: 1000, jailTime: 10, maxJail: 20, points: 0, stackable: false, requiresEvidence: false },
+  { id: 84, charge: 'Racketeering (RICO)', category: 'other', severity: 'felony', fine: 15000, jailTime: 100, maxJail: 200, points: 0, stackable: false, requiresEvidence: true },
+  { id: 85, charge: 'Terrorism', category: 'other', severity: 'felony', fine: 20000, jailTime: 120, maxJail: 240, points: 0, stackable: false, requiresEvidence: true },
+].map((charge) => normalizeChargeRecord(charge));

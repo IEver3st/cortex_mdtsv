@@ -2,6 +2,7 @@
   import { mdtStore } from '../lib/stores/mdt.svelte.js';
   import { dataStore } from '../lib/stores/data.svelte.js';
   import { isEnvBrowser } from '../lib/utils/nui.js';
+  import MdtCheckbox from '../lib/components/MdtCheckbox.svelte';
 
   const STATUSES = [
     { key: 'open', label: 'Open', color: 'var(--mdt-success)' },
@@ -24,6 +25,21 @@
     { key: 'citizen', label: 'Citizens', icon: 'M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z' },
     { key: 'vehicle', label: 'Vehicles', icon: 'M8 17h8M8 17l-2 0a2 2 0 01-2-2V9a2 2 0 012-2h12a2 2 0 012 2v6a2 2 0 01-2 2h-2M8 17v2m8-2v2M7 9h2m6 0h2' },
   ];
+
+  /** @param {string} [fileName] @param {string} [fileType] */
+  function attachmentKindAbbrev(fileName, fileType) {
+    const n = String(fileName || '').toLowerCase();
+    const t = String(fileType || '').toLowerCase();
+    const dot = n.lastIndexOf('.');
+    const ext = dot >= 0 ? n.slice(dot + 1, dot + 5) : '';
+    if (t.includes('pdf') || ext === 'pdf') return 'PDF';
+    if (t.includes('image') || /^(png|jpe?g|webp|gif|bmp)$/.test(ext)) return 'IMG';
+    if (t.includes('video') || /^(mp4|webm|mov|mkv)$/.test(ext)) return 'VID';
+    if (t.includes('audio') || /^(mp3|wav|ogg|m4a)$/.test(ext)) return 'AUD';
+    if (ext) return ext.toUpperCase().slice(0, 4);
+    const head = t.replace(/[/\\].*/, '').slice(0, 4).trim();
+    return head ? head.toUpperCase() : 'FILE';
+  }
 
   const MOCK_CASES = [
     { case_id: 1, case_number: 'CASE-20260115-0001', title: 'Downtown Bank Robbery Investigation', lead_detective: 'Det. Sarah Mitchell', status: 'open', priority: 'critical', updated_at: '2026-03-20', description: 'Multiple suspects involved in armed robbery of Fleeca Bank downtown. Suspects fled in a black SUV heading north.', restricted: false },
@@ -63,20 +79,27 @@
   let editStatus = $state('');
   let editPriority = $state('');
   let editRestricted = $state(false);
-
-  let curStatusDef = $derived(getStatusDef(editStatus));
-  let curPriorityDef = $derived(getPriorityDef(editPriority));
+  let attachmentName = $state('');
+  let attachmentUrl = $state('');
+  let attachmentType = $state('');
+  let attachmentNotes = $state('');
+  let personnelQuery = $state('');
+  let personnelRole = $state('assigned');
+  let linkEntityType = $state('report');
+  let linkEntityId = $state('');
 
   let caseList = $derived(isEnvBrowser() ? MOCK_CASES : dataStore.casesList);
   let caseTotal = $derived(isEnvBrowser() ? MOCK_CASES.length : dataStore.casesTotal);
   let caseDetail = $derived(isEnvBrowser() ? (dataStore.selectedCase || MOCK_CASES[0]) : dataStore.selectedCase);
   let personnel = $derived(isEnvBrowser() ? MOCK_PERSONNEL : dataStore.casePersonnel);
   let links = $derived(isEnvBrowser() ? MOCK_LINKS : dataStore.caseLinks);
+  let attachments = $derived(isEnvBrowser() ? [] : (dataStore.caseAttachments || []));
+  let officerResults = $derived(dataStore.officerResults || []);
 
   let perPage = 15;
   let totalPages = $derived(Math.max(1, Math.ceil(caseTotal / perPage)));
 
-  let groupedLinks = $derived(() => {
+  let groupedLinks = $derived.by(() => {
     const grouped = {};
     for (const group of ENTITY_GROUPS) {
       grouped[group.key] = (links || []).filter(l => l.entity_type === group.key);
@@ -177,6 +200,68 @@
     if (!isEnvBrowser() && caseDetail) {
       dataStore.getCase(caseDetail.id || caseDetail.case_id);
     }
+  }
+
+  async function handleAddAttachment() {
+    if (!caseDetail || !attachmentName.trim() || !attachmentUrl.trim()) return;
+    saving = true;
+    await dataStore.addAttachment({
+      parentType: 'case',
+      parentId: caseDetail.id || caseDetail.case_id,
+      fileName: attachmentName.trim(),
+      fileUrl: attachmentUrl.trim(),
+      fileType: attachmentType.trim() || null,
+      notes: attachmentNotes.trim() || null,
+    });
+    if (!isEnvBrowser()) {
+      await dataStore.getCase(caseDetail.id || caseDetail.case_id);
+    }
+    attachmentName = '';
+    attachmentUrl = '';
+    attachmentType = '';
+    attachmentNotes = '';
+    saving = false;
+  }
+
+  async function handleRemoveAttachment(id) {
+    if (!caseDetail) return;
+    saving = true;
+    await dataStore.removeAttachment(id, 'case');
+    if (!isEnvBrowser()) {
+      await dataStore.getCase(caseDetail.id || caseDetail.case_id);
+    }
+    saving = false;
+  }
+
+  async function handleSearchPersonnel() {
+    if (!personnelQuery.trim()) return;
+    await dataStore.searchOfficers(personnelQuery.trim());
+  }
+
+  async function handleAddPersonnel(officerId) {
+    if (!caseDetail || !officerId) return;
+    saving = true;
+    await dataStore.addPersonnel({
+      caseId: caseDetail.id || caseDetail.case_id,
+      officerId,
+      role: personnelRole,
+    });
+    personnelQuery = '';
+    await dataStore.getCase(caseDetail.id || caseDetail.case_id);
+    saving = false;
+  }
+
+  async function handleAddLink() {
+    if (!caseDetail || !linkEntityId.trim()) return;
+    saving = true;
+    await dataStore.addCaseLink({
+      caseId: caseDetail.id || caseDetail.case_id,
+      entityType: linkEntityType,
+      entityId: linkEntityId.trim(),
+    });
+    linkEntityId = '';
+    await dataStore.getCase(caseDetail.id || caseDetail.case_id);
+    saving = false;
   }
 
   function prevPage() {
@@ -313,145 +398,262 @@
 
   {:else if mode === 'detail' && caseDetail}
     <div class="detail-mode">
-      <button class="back-btn" onclick={goToList}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M19 12H5M12 19l-7-7 7-7" />
-        </svg>
-        <span>Back to Cases</span>
-      </button>
+      <div class="detail-top-bar">
+        <button class="back-btn" onclick={goToList}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 12H5M12 19l-7-7 7-7" />
+          </svg>
+          <span>Back to Cases</span>
+        </button>
+        <button class="btn-save-full" onclick={handleSave} disabled={saving}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>
+          <span>{saving ? 'Saving...' : 'Save Case'}</span>
+        </button>
+      </div>
 
       <div class="detail-header">
-        <div class="header-top-row">
-          <span class="case-number font-mono">{caseDetail.case_number}</span>
-          <div class="header-badges">
-            <span class="status-badge" style="--status-color: {curStatusDef.color}">{curStatusDef.label}</span>
-            <span class="priority-badge" style="--pri-color: {curPriorityDef.color}">
-              <span class="priority-dot" style="background: {curPriorityDef.color}"></span>
-              {curPriorityDef.label}
-            </span>
-          </div>
-        </div>
-        <input
-          type="text"
-          class="title-input"
-          bind:value={editTitle}
-          placeholder="Case title..."
-        />
-      </div>
-
-      <div class="detail-controls">
-        <div class="control-group">
-          <span class="control-label">Status</span>
-          <div class="control-options">
-            {#each STATUSES as s (s.key)}
-              <button
-                class="control-btn"
-                class:active={editStatus === s.key}
-                style="--ctrl-color: {s.color}"
-                onclick={() => editStatus = s.key}
-              >{s.label}</button>
-            {/each}
-          </div>
+        <div class="detail-report-line">
+          <span class="detail-meta-label">Case number</span>
+          <p class="detail-report-id font-mono">{caseDetail.case_number}</p>
         </div>
 
-        <div class="control-group">
-          <span class="control-label">Priority</span>
-          <div class="control-options">
-            {#each PRIORITIES as p (p.key)}
-              <button
-                class="control-btn"
-                class:active={editPriority === p.key}
-                style="--ctrl-color: {p.color}"
-                onclick={() => editPriority = p.key}
-              >{p.label}</button>
-            {/each}
+        <div class="detail-meta-grid">
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Status</span>
+            <select id="case-edit-status" class="form-select" bind:value={editStatus}>
+              {#each STATUSES as s (s.key)}
+                <option value={s.key}>{s.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Priority</span>
+            <select id="case-edit-priority" class="form-select" bind:value={editPriority}>
+              {#each PRIORITIES as p (p.key)}
+                <option value={p.key}>{p.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Lead</span>
+            <p class="detail-meta-value">
+              {caseDetail.lead_detective || (caseDetail.lead_first ? `${caseDetail.lead_first} ${caseDetail.lead_last}` : '\u2014')}
+            </p>
+          </div>
+          <div class="detail-meta-item">
+            <span class="detail-meta-label">Updated</span>
+            <p class="detail-meta-value detail-meta-mono font-mono">{formatDate(caseDetail.updated_at)}</p>
           </div>
         </div>
       </div>
 
-      <div class="section-card">
-        <h3 class="section-label">Description</h3>
-        <textarea
-          class="form-textarea"
-          rows="5"
-          placeholder="Case description..."
-          bind:value={editDescription}
-        ></textarea>
-      </div>
+      <div class="detail-grid">
+        <div class="detail-main">
+          <div class="detail-stack">
+            <div class="detail-section">
+              <label class="form-label" for="case-title">Title</label>
+              <input
+                id="case-title"
+                type="text"
+                class="form-input"
+                bind:value={editTitle}
+                placeholder="Case title..."
+              />
+              <label class="form-label" for="case-desc">Description</label>
+              <textarea
+                id="case-desc"
+                class="form-textarea narrative-textarea"
+                rows="10"
+                placeholder="Case description..."
+                bind:value={editDescription}
+              ></textarea>
+            </div>
 
-      <div class="section-card">
-        <div class="section-header-row">
-          <h3 class="section-label">Personnel</h3>
-          <button class="btn-ghost" disabled>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14" /></svg>
-            Add
-          </button>
-        </div>
-        {#if personnel.length > 0}
-          <div class="personnel-list">
-            {#each personnel as p (p.id)}
-              <div class="personnel-row">
-                <div class="personnel-info">
-                  <span class="personnel-name">{p.officer_name || (p.first_name ? `${p.first_name} ${p.last_name}` : '—')}</span>
-                  <span class="personnel-meta font-mono">{p.callsign || '—'} &middot; {p.rank || '—'}</span>
+            <div class="detail-section">
+              <div class="section-header">
+                <h3 class="section-label">Personnel</h3>
+                <span class="section-count font-mono">{personnel.length}</span>
+              </div>
+              <div class="inline-form-grid">
+                <input
+                  class="form-input"
+                  bind:value={personnelQuery}
+                  placeholder="Officer name or callsign"
+                  onkeydown={(e) => { if (e.key === 'Enter') handleSearchPersonnel(); }}
+                />
+                <select class="form-select" bind:value={personnelRole}>
+                  <option value="assigned">Assigned</option>
+                  <option value="lead">Lead</option>
+                  <option value="support">Support</option>
+                </select>
+              </div>
+              <button type="button" class="btn-add-secondary" onclick={handleSearchPersonnel} disabled={!personnelQuery.trim() || saving}>
+                Search
+              </button>
+              {#if officerResults.length > 0}
+                <div class="flat-list">
+                  {#each officerResults as result (result.id)}
+                    <button type="button" class="flat-list-row flat-list-row-button" onclick={() => handleAddPersonnel(result.id)}>
+                      <div class="flat-list-main">
+                        <span class="flat-list-title">{result.first_name} {result.last_name}</span>
+                        <span class="flat-list-sub">{result.rank || 'Officer'} · {result.callsign || 'No callsign'} · {(result.department || 'police').toUpperCase()}</span>
+                      </div>
+                    </button>
+                  {/each}
                 </div>
-                <span class="role-badge" class:role-lead={p.role === 'lead'}>{p.role === 'lead' ? 'Lead' : 'Assigned'}</span>
-                <button class="btn-remove" onclick={() => handleRemovePersonnel(p.id)} aria-label="Remove">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
-                </button>
-              </div>
-            {/each}
-          </div>
-        {:else}
-          <p class="section-empty">No personnel assigned</p>
-        {/if}
-      </div>
+              {/if}
+              {#if personnel.length > 0}
+                <div class="flat-list flat-list-tight">
+                  {#each personnel as p (p.id)}
+                    <div class="flat-list-row">
+                      <div class="flat-list-main">
+                        <span class="flat-list-title">{p.officer_name || (p.first_name ? `${p.first_name} ${p.last_name}` : '—')}</span>
+                        <span class="flat-list-sub font-mono">{p.callsign || '—'} · {p.rank || '—'}</span>
+                      </div>
+                      <span class="role-badge" class:role-lead={p.role === 'lead'}>{p.role === 'lead' ? 'Lead' : p.role === 'support' ? 'Support' : 'Assigned'}</span>
+                      <button type="button" class="btn-remove" onclick={() => handleRemovePersonnel(p.id)} aria-label="Remove">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                  {/each}
+                </div>
+              {:else}
+                <p class="empty-inline">No personnel assigned</p>
+              {/if}
+            </div>
 
-      <div class="section-card">
-        <h3 class="section-label">Linked Entities</h3>
-        {#each ENTITY_GROUPS as group (group.key)}
-          {@const items = groupedLinks()[group.key]}
-          {#if items.length > 0}
-            <div class="entity-group">
-              <div class="entity-group-header">
-                <svg class="entity-group-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d={group.icon} /></svg>
-                <span class="entity-group-label">{group.label}</span>
-                <span class="entity-group-count font-mono">{items.length}</span>
+            <div class="detail-section">
+              <div class="section-header">
+                <h3 class="section-label">Linked Entities</h3>
+                <div class="section-header-actions">
+                  <span class="section-count font-mono">{(links || []).length}</span>
+                </div>
               </div>
-              {#each items as link (link.id)}
-                <div class="entity-row">
-                  <span class="entity-id font-mono">{link.identifier}</span>
-                  <span class="entity-name">{link.display_name || '\u2014'}</span>
-                  <button class="btn-remove" onclick={() => handleRemoveLink(link.id)} aria-label="Remove link">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              <div class="inline-form-grid">
+                <select class="form-select" bind:value={linkEntityType}>
+                  {#each ENTITY_GROUPS as group (group.key)}
+                    <option value={group.key}>{group.label}</option>
+                  {/each}
+                </select>
+                <input
+                  class="form-input"
+                  bind:value={linkEntityId}
+                  placeholder="Entity ID"
+                  onkeydown={(e) => { if (e.key === 'Enter') handleAddLink(); }}
+                />
+              </div>
+              <button type="button" class="btn-add-secondary" onclick={handleAddLink} disabled={!linkEntityId.trim() || saving}>
+                Add Link
+              </button>
+              {#each ENTITY_GROUPS as group (group.key)}
+                {@const items = groupedLinks[group.key]}
+                {#if items.length > 0}
+                  <div class="link-type-block">
+                    <div class="link-type-head">
+                      <svg class="link-type-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d={group.icon} /></svg>
+                      <span class="link-type-label">{group.label}</span>
+                      <span class="link-type-count font-mono">{items.length}</span>
+                    </div>
+                    <div class="flat-list flat-list-tight">
+                      {#each items as link (link.id)}
+                        <div class="flat-list-row link-row">
+                          <span class="link-id font-mono">{link.identifier}</span>
+                          <span class="link-title">{link.display_name || '\u2014'}</span>
+                          <button type="button" class="btn-remove" onclick={() => handleRemoveLink(link.id)} aria-label="Remove link">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              {/each}
+              {#if (links || []).length === 0}
+                <p class="empty-inline">No linked entities</p>
+              {/if}
+            </div>
+          </div>
+        </div>
+
+        <aside class="detail-sidebar">
+          <div class="detail-stack">
+            <div class="detail-section">
+              <div class="section-header">
+                <h3 class="section-label">Attachments</h3>
+                <span class="section-count font-mono">{attachments.length}</span>
+              </div>
+
+              <div class="attachments-shell">
+                {#if attachments.length > 0}
+                  <ul class="attachments-list" role="list">
+                    {#each attachments as attachment (attachment.id)}
+                      <li class="attachments-row">
+                        <span class="attachments-kind font-mono" title={attachment.file_type || 'file'}>{attachmentKindAbbrev(attachment.file_name, attachment.file_type)}</span>
+                        <div class="attachments-body min-w-0">
+                          <a class="attachments-title" href={attachment.file_url} target="_blank" rel="noreferrer">{attachment.file_name}</a>
+                          {#if attachment.notes}
+                            <p class="attachments-notes">{attachment.notes}</p>
+                          {/if}
+                          <span class="attachments-meta font-mono">{attachment.file_type || 'Unknown type'}</span>
+                        </div>
+                        <div class="attachments-actions">
+                          <a class="attachments-open" href={attachment.file_url} target="_blank" rel="noreferrer" aria-label="Open in new tab">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" /></svg>
+                          </a>
+                          <button type="button" class="btn-remove attachments-remove" onclick={() => handleRemoveAttachment(attachment.id)} aria-label="Remove attachment">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                          </button>
+                        </div>
+                      </li>
+                    {/each}
+                  </ul>
+                {:else}
+                  <div class="attachments-empty">
+                    <p class="attachments-empty-title">No files linked</p>
+                    <p class="attachments-empty-hint">Paste a stable URL (evidence locker, cloud export, or CAD export).</p>
+                  </div>
+                {/if}
+
+                <div class="attachments-add">
+                  <p class="attachments-add-hed">Add file</p>
+                  <div class="attachments-form-grid">
+                    <div class="attachments-field">
+                      <label class="form-label" for="case-att-name">Display name</label>
+                      <input id="case-att-name" class="form-input" bind:value={attachmentName} placeholder="Body-worn clip, lab PDF" />
+                    </div>
+                    <div class="attachments-field">
+                      <label class="form-label" for="case-att-url">File URL</label>
+                      <input id="case-att-url" class="form-input" bind:value={attachmentUrl} placeholder="https://..." />
+                    </div>
+                    <div class="attachments-field">
+                      <label class="form-label" for="case-att-type">Type / MIME</label>
+                      <input id="case-att-type" class="form-input" bind:value={attachmentType} placeholder="video/mp4, application/pdf" />
+                    </div>
+                  </div>
+                  <div class="attachments-field attachments-field-notes">
+                    <label class="form-label" for="case-att-notes">Notes</label>
+                    <textarea id="case-att-notes" class="form-textarea compact-textarea" bind:value={attachmentNotes} rows="2" placeholder="Chain of custody, redaction flags, page refs"></textarea>
+                  </div>
+                  <button type="button" class="btn-add-secondary attachments-submit" onclick={handleAddAttachment} disabled={saving || !attachmentName.trim() || !attachmentUrl.trim()}>
+                    Add attachment
                   </button>
                 </div>
-              {/each}
+              </div>
             </div>
-          {/if}
-        {/each}
-        {#if (links || []).length === 0}
-          <p class="section-empty">No linked entities</p>
-        {/if}
-      </div>
 
-      <div class="section-card restricted-row">
-        <label class="checkbox-label">
-          <input type="checkbox" class="checkbox-input" bind:checked={editRestricted} />
-          <span class="checkbox-box">
-            {#if editRestricted}
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M5 13l4 4L19 7" /></svg>
-            {/if}
-          </span>
-          <span class="checkbox-text">Restricted Case</span>
-        </label>
-        <span class="restricted-hint">Only authorized personnel can view this case</span>
-      </div>
-
-      <div class="detail-actions">
-        <button class="btn-primary" onclick={handleSave} disabled={saving}>
-          {saving ? 'Saving...' : 'Save Changes'}
-        </button>
+            <div class="detail-section detail-section-last">
+              <h3 class="section-label">Restrictions</h3>
+              <div class="toggle-row">
+                <MdtCheckbox bind:checked={editRestricted}>
+                  {#snippet children()}
+                    <span class="checkbox-text">Restricted case</span>
+                  {/snippet}
+                </MdtCheckbox>
+              </div>
+              <span class="restricted-hint">Only authorized personnel can view this case</span>
+            </div>
+          </div>
+        </aside>
       </div>
     </div>
   {/if}
@@ -475,6 +677,10 @@
     flex-direction: column;
     gap: calc(16px * var(--mdt-scale));
     animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .detail-mode {
+    gap: calc(10px * var(--mdt-scale));
   }
 
   .page-header {
@@ -535,7 +741,7 @@
   }
 
   .btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-primary:disabled {
@@ -546,37 +752,6 @@
   .btn-create {
     align-self: flex-start;
     margin-top: calc(4px * var(--mdt-scale));
-  }
-
-  .btn-ghost {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(4px * var(--mdt-scale));
-    padding: calc(4px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-radius: var(--mdt-radius-sm);
-    border: 1px solid var(--mdt-border);
-    background: none;
-    color: var(--mdt-text-dim);
-    font-family: 'Outfit', sans-serif;
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease;
-  }
-
-  .btn-ghost svg {
-    width: calc(12px * var(--mdt-scale));
-    height: calc(12px * var(--mdt-scale));
-  }
-
-  .btn-ghost:hover {
-    background: var(--mdt-surface-2);
-    color: var(--mdt-text);
-  }
-
-  .btn-ghost:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
   }
 
   .results-table {
@@ -694,22 +869,6 @@
     flex-shrink: 0;
   }
 
-  .priority-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    padding: calc(2px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    font-family: 'Outfit', sans-serif;
-    background: color-mix(in srgb, var(--pri-color) 10%, transparent);
-    color: var(--pri-color);
-    border: 1px solid color-mix(in srgb, var(--pri-color) 20%, transparent);
-    white-space: nowrap;
-    line-height: 1.4;
-  }
-
   .pagination {
     display: flex;
     align-items: center;
@@ -809,7 +968,7 @@
   }
 
   .back-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .create-form {
@@ -855,6 +1014,29 @@
   }
 
   .text-input:focus {
+    border-color: var(--mdt-accent);
+  }
+
+  .form-input {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(12px * var(--mdt-scale));
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .form-input::placeholder {
+    color: var(--mdt-text-muted);
+  }
+
+  .form-input:focus {
     border-color: var(--mdt-accent);
   }
 
@@ -909,7 +1091,7 @@
   }
 
   .priority-option:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .priority-option.active {
@@ -918,194 +1100,645 @@
     color: var(--pri-color);
   }
 
-  .detail-header {
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius-lg);
-    padding: calc(18px * var(--mdt-scale));
-    display: flex;
-    flex-direction: column;
-    gap: calc(10px * var(--mdt-scale));
-  }
-
-  .header-top-row {
+  .detail-top-bar {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: calc(12px * var(--mdt-scale));
+    flex-wrap: wrap;
   }
 
-  .case-number {
-    font-size: calc(11px * var(--mdt-scale));
-    color: var(--mdt-accent-dim);
-    letter-spacing: 0.04em;
+  .detail-top-bar .back-btn {
+    align-self: center;
   }
 
-  .header-badges {
-    display: flex;
-    gap: calc(8px * var(--mdt-scale));
+  .btn-save-full {
+    display: inline-flex;
     align-items: center;
-  }
-
-  .title-input {
-    width: 100%;
-    padding: calc(6px * var(--mdt-scale)) 0;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     border: none;
-    border-bottom: 1px solid var(--mdt-border);
-    background: transparent;
-    color: var(--mdt-text);
+    background: var(--mdt-accent);
+    color: var(--mdt-bg);
     font-family: 'Outfit', sans-serif;
-    font-size: calc(20px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: -0.01em;
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
-
-  .title-input:focus {
-    border-bottom-color: var(--mdt-accent);
-  }
-
-  .title-input::placeholder {
-    color: var(--mdt-text-muted);
-  }
-
-  .detail-controls {
-    display: flex;
-    flex-direction: column;
-    gap: calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    padding: calc(14px * var(--mdt-scale));
-  }
-
-  .control-group {
-    display: flex;
-    align-items: center;
-    gap: calc(12px * var(--mdt-scale));
-  }
-
-  .control-label {
-    font-size: calc(10px * var(--mdt-scale));
+    font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
-    color: var(--mdt-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-family: 'Outfit', sans-serif;
-    min-width: calc(60px * var(--mdt-scale));
+    cursor: pointer;
+    transition: opacity 0.15s ease, transform 0.1s ease;
     flex-shrink: 0;
   }
 
-  .control-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: calc(4px * var(--mdt-scale));
+  .btn-save-full svg {
+    width: calc(14px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
   }
 
-  .control-btn {
-    padding: calc(5px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+  .btn-save-full:hover {
+    opacity: 0.9;
+  }
+
+  .btn-save-full:active {
+    transform: scale(0.96);
+  }
+
+  .btn-save-full:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .detail-header {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: calc(10px * var(--mdt-scale));
+    padding: 0 0 calc(12px * var(--mdt-scale));
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 72%, transparent);
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+  }
+
+  .detail-header .detail-meta-label {
+    display: block;
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 calc(6px * var(--mdt-scale));
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .detail-report-line {
+    padding-bottom: calc(8px * var(--mdt-scale));
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 65%, transparent);
+  }
+
+  .detail-report-id {
+    margin: 0;
+    font-size: calc(16px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-accent);
+    letter-spacing: 0.04em;
+    line-height: 1.35;
+  }
+
+  .detail-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+  }
+
+  @media (max-width: 1100px) {
+    .detail-meta-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (max-width: 520px) {
+    .detail-meta-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .detail-meta-item {
+    min-width: 0;
+  }
+
+  .detail-meta-value {
+    margin: 0;
+    font-size: calc(13px * var(--mdt-scale));
+    color: var(--mdt-text);
+    font-weight: 500;
+    line-height: 1.4;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .detail-meta-mono {
+    color: var(--mdt-text-dim);
+    font-size: calc(12px * var(--mdt-scale));
+    letter-spacing: 0.04em;
+  }
+
+  .form-select {
+    width: 100%;
+    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
     border-radius: var(--mdt-radius-sm);
     border: 1px solid var(--mdt-border);
-    background: none;
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text);
+    font-family: 'Outfit', sans-serif;
+    font-size: calc(13px * var(--mdt-scale));
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='rgba(228,232,239,0.38)' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right calc(10px * var(--mdt-scale)) center;
+    padding-right: calc(32px * var(--mdt-scale));
+  }
+
+  .form-select:focus {
+    border-color: var(--mdt-accent);
+  }
+
+  .form-select option {
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text);
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr minmax(220px, calc(268px * var(--mdt-scale)));
+    gap: calc(18px * var(--mdt-scale));
+    align-items: start;
+    min-height: 0;
+  }
+
+  .detail-main {
+    min-width: 0;
+  }
+
+  .detail-sidebar {
+    min-width: 0;
+    padding-left: calc(16px * var(--mdt-scale));
+    margin-left: calc(2px * var(--mdt-scale));
+    border-left: 1px solid color-mix(in srgb, var(--mdt-border) 65%, transparent);
+  }
+
+  @media (max-width: 960px) {
+    .detail-grid {
+      grid-template-columns: 1fr;
+      gap: calc(12px * var(--mdt-scale));
+    }
+
+    .detail-sidebar {
+      padding-left: 0;
+      margin-left: 0;
+      border-left: none;
+      padding-top: calc(12px * var(--mdt-scale));
+      margin-top: calc(4px * var(--mdt-scale));
+      border-top: 1px solid color-mix(in srgb, var(--mdt-border) 65%, transparent);
+    }
+  }
+
+  .detail-stack {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .detail-section {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 72%, transparent);
+  }
+
+  .detail-stack > .detail-section:first-child {
+    padding-top: 0;
+  }
+
+  .detail-stack > .detail-section:last-child,
+  .detail-section-last {
+    border-bottom: none;
+    padding-bottom: 0;
+  }
+
+  .detail-mode .form-label {
+    font-size: calc(10px * var(--mdt-scale));
+    letter-spacing: 0.06em;
+  }
+
+  .detail-mode .form-input {
+    font-size: calc(13px * var(--mdt-scale));
+  }
+
+  .narrative-textarea {
+    min-height: calc(180px * var(--mdt-scale));
+    line-height: 1.6;
+  }
+
+  .attachments-shell {
+    margin-top: calc(6px * var(--mdt-scale));
+  }
+
+  .attachments-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .attachments-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: calc(10px * var(--mdt-scale));
+    align-items: start;
+    padding: calc(10px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 48%, transparent);
+    transition: background 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .attachments-row:last-child {
+    border-bottom: none;
+  }
+
+  .attachments-row:hover {
+    background: color-mix(in srgb, var(--mdt-surface-2) 42%, transparent);
+  }
+
+  .attachments-kind {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: calc(36px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
+    border-radius: calc(8px * var(--mdt-scale));
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--mdt-accent);
+    background: color-mix(in srgb, var(--mdt-accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--mdt-accent) 22%, transparent);
+    flex-shrink: 0;
+    line-height: 1.2;
+    margin-top: calc(2px * var(--mdt-scale));
+  }
+
+  .attachments-body {
+    display: flex;
+    flex-direction: column;
+    gap: calc(3px * var(--mdt-scale));
+    min-width: 0;
+  }
+
+  .attachments-title {
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+    font-family: 'Outfit', sans-serif;
+    text-decoration: none;
+    line-height: 1.35;
+    word-break: break-word;
+    transition: color 0.15s ease;
+  }
+
+  .attachments-title:hover {
+    color: var(--mdt-accent);
+  }
+
+  .attachments-notes {
+    margin: 0;
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-dim);
+    line-height: 1.45;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .attachments-meta {
+    font-size: calc(9px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    letter-spacing: 0.02em;
+    line-height: 1.3;
+    word-break: break-word;
+  }
+
+  .attachments-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: calc(4px * var(--mdt-scale));
+    flex-shrink: 0;
+    padding-top: calc(1px * var(--mdt-scale));
+  }
+
+  .attachments-open {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px solid color-mix(in srgb, var(--mdt-border) 75%, transparent);
+    background: color-mix(in srgb, var(--mdt-surface-2) 55%, transparent);
+    color: var(--mdt-text-muted);
+    text-decoration: none;
+    transition:
+      color 0.15s ease,
+      background 0.15s ease,
+      border-color 0.15s ease,
+      transform 0.1s ease;
+  }
+
+  .attachments-open svg {
+    width: calc(14px * var(--mdt-scale));
+    height: calc(14px * var(--mdt-scale));
+  }
+
+  .attachments-open:hover {
+    color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 28%, transparent);
+    background: color-mix(in srgb, var(--mdt-accent) 10%, transparent);
+  }
+
+  .attachments-open:active {
+    transform: translateY(1px);
+  }
+
+  .attachments-remove.btn-remove {
+    width: calc(30px * var(--mdt-scale));
+    height: calc(30px * var(--mdt-scale));
+    border: 1px solid color-mix(in srgb, var(--mdt-border) 75%, transparent);
+    background: color-mix(in srgb, var(--mdt-surface-2) 55%, transparent);
+  }
+
+  .attachments-empty {
+    padding: calc(10px * var(--mdt-scale)) 0 calc(6px * var(--mdt-scale));
+    text-align: left;
+  }
+
+  .attachments-empty-title {
+    margin: 0 0 calc(4px * var(--mdt-scale));
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-dim);
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .attachments-empty-hint {
+    margin: 0;
+    font-size: calc(11px * var(--mdt-scale));
+    line-height: 1.5;
+    color: var(--mdt-text-muted);
+    max-width: 38ch;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .attachments-add {
+    margin-top: calc(8px * var(--mdt-scale));
+    padding-top: calc(10px * var(--mdt-scale));
+    border-top: 1px solid color-mix(in srgb, var(--mdt-border) 52%, transparent);
+  }
+
+  .attachments-add-hed {
+    margin: 0 0 calc(10px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
     color: var(--mdt-text-muted);
     font-family: 'Outfit', sans-serif;
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, transform 0.1s ease;
-    white-space: nowrap;
   }
 
-  .control-btn:hover {
-    border-color: var(--mdt-border-2);
-    color: var(--mdt-text-dim);
-  }
-
-  .control-btn:active {
-    transform: scale(0.97);
-  }
-
-  .control-btn.active {
-    border-color: color-mix(in srgb, var(--ctrl-color) 60%, transparent);
-    background: color-mix(in srgb, var(--ctrl-color) 12%, transparent);
-    color: var(--ctrl-color);
-  }
-
-  .section-card {
-    background: var(--mdt-surface);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    padding: calc(16px * var(--mdt-scale));
+  .attachments-form-grid {
     display: flex;
     flex-direction: column;
     gap: calc(10px * var(--mdt-scale));
   }
 
-  .section-label {
+  .attachments-field {
+    display: flex;
+    flex-direction: column;
+    gap: calc(4px * var(--mdt-scale));
+  }
+
+  .attachments-field-notes {
+    margin-top: calc(2px * var(--mdt-scale));
+  }
+
+  .attachments-submit {
+    margin-top: calc(10px * var(--mdt-scale));
+  }
+
+  .compact-textarea {
+    min-height: calc(64px * var(--mdt-scale));
+  }
+
+  .btn-add-secondary {
+    align-self: flex-start;
+    margin-top: calc(4px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    padding: calc(9px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
     font-size: calc(11px * var(--mdt-scale));
+    font-family: 'Outfit', sans-serif;
+    font-weight: 600;
+    border: 1px solid color-mix(in srgb, var(--mdt-accent) 28%, transparent);
+    background: color-mix(in srgb, var(--mdt-accent) 14%, transparent);
+    color: var(--mdt-accent);
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.1s ease, opacity 0.12s ease;
+  }
+
+  .btn-add-secondary:hover {
+    background: color-mix(in srgb, var(--mdt-accent) 22%, transparent);
+  }
+
+  .btn-add-secondary:active {
+    transform: scale(0.96);
+  }
+
+  .btn-add-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  .toggle-row {
+    margin-bottom: calc(4px * var(--mdt-scale));
+  }
+
+  .toggle-row :global(.mdt-checkbox-label) {
+    font-weight: 500;
+    color: var(--mdt-text-dim);
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .section-header-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    flex-shrink: 0;
+  }
+
+  .section-label {
+    font-size: calc(10px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text-muted);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-family: 'Outfit', sans-serif;
+    margin: 0;
   }
 
-  .section-header-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .section-count {
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-accent);
+    background: var(--mdt-accent-dim);
+    padding: calc(1px * var(--mdt-scale)) calc(7px * var(--mdt-scale));
+    border-radius: calc(8px * var(--mdt-scale));
+    letter-spacing: 0.05em;
+    font-family: 'Share Tech Mono', monospace;
   }
 
-  .section-empty {
-    text-align: center;
-    color: var(--mdt-text-muted);
+  .empty-inline {
     font-size: calc(11px * var(--mdt-scale));
-    padding: calc(12px * var(--mdt-scale)) 0;
-    opacity: 0.6;
+    color: var(--mdt-text-muted);
+    padding: calc(6px * var(--mdt-scale)) 0;
+    text-align: center;
+    opacity: 0.72;
     font-family: 'Outfit', sans-serif;
   }
 
-  .personnel-list {
-    display: flex;
-    flex-direction: column;
+  .inline-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: calc(6px * var(--mdt-scale));
   }
 
-  .personnel-row {
+  @media (max-width: 520px) {
+    .inline-form-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .flat-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin-top: calc(4px * var(--mdt-scale));
+  }
+
+  .flat-list-tight {
+    margin-top: calc(2px * var(--mdt-scale));
+  }
+
+  .flat-list-row {
     display: flex;
     align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 50%, transparent);
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 52%, transparent);
     transition: background 0.12s ease;
   }
 
-  .personnel-row:last-child {
+  .flat-list-row:last-child {
     border-bottom: none;
   }
 
-  .personnel-row:hover {
-    background: color-mix(in srgb, var(--mdt-surface-2) 60%, transparent);
+  .flat-list-row:hover {
+    background: color-mix(in srgb, var(--mdt-surface-2) 35%, transparent);
   }
 
-  .personnel-info {
+  .flat-list-row-button {
+    width: 100%;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .flat-list-main {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: calc(2px * var(--mdt-scale));
+  }
+
+  .min-w-0 {
     min-width: 0;
   }
 
-  .personnel-name {
+  .flat-list-title {
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text);
     font-family: 'Outfit', sans-serif;
   }
 
-  .personnel-meta {
+  .flat-list-sub {
     font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-muted);
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .link-type-block {
+    margin-top: calc(6px * var(--mdt-scale));
+  }
+
+  .link-type-block:first-of-type {
+    margin-top: calc(2px * var(--mdt-scale));
+  }
+
+  .link-type-head {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) 0 calc(5px * var(--mdt-scale));
+    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 45%, transparent);
+  }
+
+  .link-type-icon {
+    width: calc(13px * var(--mdt-scale));
+    height: calc(13px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    flex-shrink: 0;
+  }
+
+  .link-type-label {
+    flex: 1;
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-family: 'Outfit', sans-serif;
+  }
+
+  .link-type-count {
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    opacity: 0.75;
+  }
+
+  .link-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) 0;
+  }
+
+  .link-id {
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-accent-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .link-title {
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-dim);
+    font-family: 'Outfit', sans-serif;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
   }
 
   .role-badge {
@@ -1153,132 +1786,6 @@
     background: color-mix(in srgb, var(--mdt-error) 10%, transparent);
   }
 
-  .entity-group {
-    display: flex;
-    flex-direction: column;
-    border: 1px solid color-mix(in srgb, var(--mdt-border) 50%, transparent);
-    border-radius: var(--mdt-radius-sm);
-    overflow: hidden;
-  }
-
-  .entity-group + .entity-group {
-    margin-top: calc(6px * var(--mdt-scale));
-  }
-
-  .entity-group-header {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 50%, transparent);
-  }
-
-  .entity-group-icon {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-    flex-shrink: 0;
-  }
-
-  .entity-group-label {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-family: 'Outfit', sans-serif;
-    flex: 1;
-  }
-
-  .entity-group-count {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-    opacity: 0.6;
-  }
-
-  .entity-row {
-    display: flex;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(7px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-bottom: 1px solid color-mix(in srgb, var(--mdt-border) 30%, transparent);
-    transition: background 0.12s ease;
-  }
-
-  .entity-row:last-child {
-    border-bottom: none;
-  }
-
-  .entity-row:hover {
-    background: color-mix(in srgb, var(--mdt-surface-2) 50%, transparent);
-  }
-
-  .entity-id {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-accent-dim);
-    min-width: calc(140px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .entity-name {
-    flex: 1;
-    font-size: calc(11px * var(--mdt-scale));
-    color: var(--mdt-text-dim);
-    font-family: 'Outfit', sans-serif;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .restricted-row {
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-start;
-    gap: calc(16px * var(--mdt-scale));
-    flex-wrap: wrap;
-  }
-
-  .checkbox-label {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    cursor: pointer;
-    user-select: none;
-  }
-
-  .checkbox-input {
-    position: absolute;
-    opacity: 0;
-    width: 0;
-    height: 0;
-    pointer-events: none;
-  }
-
-  .checkbox-box {
-    width: calc(16px * var(--mdt-scale));
-    height: calc(16px * var(--mdt-scale));
-    border-radius: calc(3px * var(--mdt-scale));
-    border: 1px solid var(--mdt-border-2);
-    background: var(--mdt-surface-2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    transition: background 0.12s ease, border-color 0.12s ease;
-  }
-
-  .checkbox-box svg {
-    width: calc(10px * var(--mdt-scale));
-    height: calc(10px * var(--mdt-scale));
-    color: var(--mdt-bg);
-  }
-
-  .checkbox-input:checked + .checkbox-box {
-    background: var(--mdt-accent);
-    border-color: var(--mdt-accent);
-  }
-
   .checkbox-text {
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
@@ -1290,12 +1797,6 @@
     font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-muted);
     font-family: 'Outfit', sans-serif;
-  }
-
-  .detail-actions {
-    display: flex;
-    justify-content: flex-end;
-    padding-top: calc(4px * var(--mdt-scale));
   }
 
   @keyframes fadeIn {

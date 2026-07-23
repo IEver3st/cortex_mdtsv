@@ -24,25 +24,56 @@
     Loader2,
     Keyboard,
     RotateCcw,
-  } from 'lucide-svelte';
-  import { hotkeysStore } from '../lib/stores/hotkeys.svelte.js';
+    Lock,
+    Scale,
+    IdCard,
+    Volume2,
+  } from '@lucide/svelte';
+  import { previewMdtSound } from '../lib/utils/mdtSounds.js';
+  import MdtSwitch from '../lib/components/MdtSwitch.svelte';
+  import MdtCheckbox from '../lib/components/MdtCheckbox.svelte';
+  import { hotkeysStore, normalizeHotkeyBinding } from '../lib/stores/hotkeys.svelte.js';
+  import { tabsStore } from '../lib/stores/tabs.svelte.js';
+  import { isEnvBrowser } from '../lib/utils/nui.js';
 
   const TABS = [
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'hotkeys', label: 'Hotkeys', icon: Keyboard },
     { id: 'roster', label: 'Roster', icon: Users },
+    { id: 'permissions', label: 'Permissions', icon: Lock },
+    { id: 'jail_fines', label: 'Jail & Fines', icon: Scale },
+    { id: 'licenses', label: 'Licenses', icon: IdCard },
     { id: 'announcements', label: 'Announcements', icon: Megaphone },
     { id: 'system', label: 'System', icon: SettingsIcon },
     { id: 'audit', label: 'Audit Logs', icon: ScrollText },
   ];
 
-  const STATUS_OPTIONS = ['active', 'suspended', 'inactive'];
+  const STATUS_OPTIONS = ['active', 'suspended', 'terminated', 'loa'];
+
+  const UI_CLICK_PRESETS = [
+    { id: 'exec_navigate', label: 'SecuroServ (Navigate)' },
+    { id: 'warehouse_mouse', label: 'Warehouse (Mouse click)' },
+    { id: 'hangar_click', label: 'Hangar (Click special)' },
+  ];
+
+  function patchMdtSounds(patch) {
+    mdtStore.updateSettings({
+      sounds: { ...mdtStore.settings.sounds, ...patch },
+    });
+  }
 
   let activeTab = $state('appearance');
   let mounted = $state(false);
 
-  let avatarInput = $state(mdtStore.settings.avatarUrl || '');
-  let callsignInput = $state(mdtStore.settings.callsign || '');
+  let officer = $derived(mdtStore.officer);
+  let usesLocalProfilePersistence = $derived((officer?.frameworkMode || '').toLowerCase() !== 'qbx');
+  let isStandaloneFramework = $derived((officer?.frameworkMode || '').toLowerCase() === 'standalone');
+
+  let avatarInput = $state('');
+  let callsignInput = $state('');
+  let displayFirstInput = $state('');
+  let displayLastInput = $state('');
+  let lastProfileSnapshot = $state('');
 
   let rosterSearch = $state('');
   let expandedOfficer = $state(null);
@@ -70,6 +101,35 @@
 
   let recordingHotkey = $state(null);
   let recordedCombo = $state('');
+
+  // ─── Permissions State ───
+  const PERMISSION_CATEGORIES = ['dispatch', 'records', 'investigations', 'admin'];
+  const CHANNEL_LIST = ['dispatch', 'tac-1', 'tac-2', 'tac-3', 'department', 'inter-agency'];
+  let permRoles = $state([]);
+  let permSaving = $state(false);
+  let permNewRoleName = $state('');
+  let permExpandedRole = $state(null);
+
+  // ─── Jail & Fines State ───
+  let jfCharges = $state([]);
+  let jfSearch = $state('');
+  let jfSaving = $state(null);
+  let jfEditingId = $state(null);
+  let jfEditFine = $state(0);
+  let jfEditJail = $state(0);
+  let jfEditMaxJail = $state(0);
+
+  let filteredJfCharges = $derived.by(() => {
+    if (!jfSearch.trim()) return jfCharges;
+    const q = jfSearch.toLowerCase();
+    return jfCharges.filter(c => c.charge.toLowerCase().includes(q) || c.category?.toLowerCase().includes(q));
+  });
+
+  // ─── Licenses State ───
+  let licenseTypes = $derived(dataStore.licenseTypesList || []);
+  let licSaving = $state(false);
+  let licNewName = $state('');
+  let licNewDesc = $state('');
 
   let roster = $derived(dataStore.adminRoster || []);
   let config = $derived(dataStore.configData || {});
@@ -109,25 +169,143 @@
 
   function selectTheme(themeId) {
     themeStore.apply(themeId);
-    mdtStore.settings = { theme: themeId };
+    mdtStore.updateSettings({ theme: themeId });
   }
 
-  function saveAvatar() {
-    mdtStore.settings = { avatarUrl: avatarInput || null };
-    mdtStore.officer = { avatar: avatarInput || null };
-  }
+  $effect(() => {
+    const nextAvatar = (usesLocalProfilePersistence ? (mdtStore.settings.avatarUrl || officer?.avatar) : officer?.avatar) || '';
+    const nextCallsign = (usesLocalProfilePersistence ? (mdtStore.settings.callsign || officer?.callsign) : officer?.callsign) || '';
+    const nextDisplayFirst =
+      isStandaloneFramework && usesLocalProfilePersistence
+        ? String(mdtStore.settings.officerDisplayFirstName || '').trim() || (officer?.firstName || '')
+        : '';
+    const nextDisplayLast =
+      isStandaloneFramework && usesLocalProfilePersistence
+        ? String(mdtStore.settings.officerDisplayLastName || '').trim() || (officer?.lastName || '')
+        : '';
+    const nextSnapshot = `${usesLocalProfilePersistence ? 'local' : 'server'}:${nextAvatar}:${nextCallsign}:${isStandaloneFramework ? `${nextDisplayFirst}:${nextDisplayLast}` : '-'}`;
 
-  function saveCallsign() {
-    const trimmed = callsignInput.trim();
-    mdtStore.settings = { callsign: trimmed || '' };
-    if (trimmed) {
-      mdtStore.officer = { callsign: trimmed };
+    if (!mounted || lastProfileSnapshot !== nextSnapshot) {
+      avatarInput = nextAvatar;
+      callsignInput = nextCallsign;
+      if (isStandaloneFramework) {
+        displayFirstInput = nextDisplayFirst;
+        displayLastInput = nextDisplayLast;
+      }
+      lastProfileSnapshot = nextSnapshot;
+    }
+  });
+
+  async function saveAvatar() {
+    const nextAvatar = avatarInput.trim();
+
+    if (usesLocalProfilePersistence) {
+      await mdtStore.updateSettings({ avatarUrl: nextAvatar || null });
+    }
+
+    const resp = await dataStore.saveOfficerAvatar(nextAvatar || null);
+    if (resp?.ok) {
+      mdtStore.officer = { ...mdtStore.officer, avatar: nextAvatar || null };
+      await dataStore.fetchRoster();
     }
   }
 
+  async function saveCallsign() {
+    const trimmed = callsignInput.trim();
+
+    const activeOfficer = mdtStore.officer;
+    const resp = await dataStore.registerOfficer({
+      firstName: activeOfficer.firstName,
+      lastName: activeOfficer.lastName,
+      rank: activeOfficer.rank,
+      callsign: trimmed || activeOfficer.callsign || '',
+      departmentKey: activeOfficer.departmentKey || activeOfficer.department,
+    });
+
+    if (!resp?.ok) {
+      return;
+    }
+
+    if (usesLocalProfilePersistence) {
+      await mdtStore.updateSettings({ callsign: trimmed || '' });
+    }
+
+    mdtStore.officer = {
+      ...activeOfficer,
+      officerId: resp.officerId || activeOfficer.officerId || null,
+      callsign: trimmed || activeOfficer.callsign || '',
+    };
+
+    await Promise.all([
+      dataStore.fetchUnits(),
+      dataStore.fetchDashboard(),
+      dataStore.fetchDispatch(),
+      dataStore.fetchBodycams(),
+    ]);
+  }
+
+  async function saveDisplayName() {
+    if (!isStandaloneFramework) return;
+
+    const f = displayFirstInput.trim();
+    const l = displayLastInput.trim();
+    const activeOfficer = mdtStore.officer;
+    const useFramework = !f && !l;
+
+    const payload = useFramework
+      ? { ...dataStore.buildOfficerProfilePayload(activeOfficer, { forceFrameworkDisplayName: true }) }
+      : {
+          firstName: f,
+          lastName: l,
+          rank: activeOfficer.rank,
+          callsign: activeOfficer.callsign || '',
+          departmentKey: activeOfficer.departmentKey || activeOfficer.department,
+        };
+
+    const resp = await dataStore.registerOfficer(payload);
+    if (!resp?.ok) return;
+
+    await mdtStore.updateSettings({
+      officerDisplayFirstName: f,
+      officerDisplayLastName: l,
+    });
+
+    const oid = resp.officerId || activeOfficer.officerId;
+    await Promise.all([dataStore.fetchUnits(), dataStore.fetchRoster()]);
+
+    let row =
+      (dataStore.unitsList || []).find((u) => String(u.officer_id) === String(oid)) ||
+      (dataStore.adminRoster || []).find((o) => String(o.id) === String(oid));
+
+    const nextFirst = row
+      ? String(row.first_name || row.firstName || '').trim()
+      : f || String(activeOfficer.firstName || '').trim();
+    const nextLast = row
+      ? String(row.last_name || row.lastName || '').trim()
+      : l || String(activeOfficer.lastName || '').trim();
+
+    mdtStore.officer = {
+      ...activeOfficer,
+      officerId: oid || activeOfficer.officerId,
+      firstName: nextFirst || activeOfficer.firstName,
+      lastName: nextLast || activeOfficer.lastName,
+    };
+
+    await dataStore.fetchDashboard();
+  }
+
+  $effect(() => {
+    if (tabsStore.activePage !== 'settings') return;
+    mdtStore.settingsDeepLinkSeq;
+    const pending = mdtStore.consumePendingSettingsTab();
+    if (pending && TABS.some((t) => t.id === pending)) {
+      switchTab(pending);
+    }
+  });
+
   function switchTab(tabId) {
     activeTab = tabId;
-    if (tabId === 'roster' && roster.length === 0) {
+    if (tabId === 'roster') {
       dataStore.fetchRoster();
       if (!config.departments) dataStore.fetchConfig();
     }
@@ -142,6 +320,15 @@
     if (tabId === 'audit' && auditLogs.length === 0) {
       auditPage = 1;
       loadAuditLogs();
+    }
+    if (tabId === 'permissions' && permRoles.length === 0) {
+      loadPermissions();
+    }
+    if (tabId === 'jail_fines' && jfCharges.length === 0) {
+      loadJailFines();
+    }
+    if (tabId === 'licenses' && licenseTypes.length === 0) {
+      loadLicenses();
     }
   }
 
@@ -184,16 +371,18 @@
   async function submitAnnouncement() {
     if (!annTitle.trim() || !annContent.trim()) return;
     annSaving = true;
-    await dataStore.createAnnouncement({
+    const result = await dataStore.createAnnouncement({
       title: annTitle,
       content: annContent,
       department: annDepartment || null,
       pinned: annPinned,
     });
-    annTitle = '';
-    annContent = '';
-    annDepartment = '';
-    annPinned = false;
+    if (result?.ok) {
+      annTitle = '';
+      annContent = '';
+      annDepartment = '';
+      annPinned = false;
+    }
     await dataStore.fetchDashboard();
     annSaving = false;
   }
@@ -220,6 +409,123 @@
   function loadMoreLogs() {
     auditPage += 1;
     loadAuditLogs();
+  }
+
+  // ─── Permissions Functions ───
+  async function loadPermissions() {
+    if (isEnvBrowser()) {
+      permRoles = [
+        { id: 1, name: 'Officer', permissions: { dispatch: true, records: true, investigations: false, admin: false }, channels: ['dispatch', 'tac-1'] },
+        { id: 2, name: 'Sergeant', permissions: { dispatch: true, records: true, investigations: true, admin: false }, channels: ['dispatch', 'tac-1', 'tac-2', 'department'] },
+        { id: 3, name: 'Lieutenant', permissions: { dispatch: true, records: true, investigations: true, admin: true }, channels: ['dispatch', 'tac-1', 'tac-2', 'tac-3', 'department', 'inter-agency'] },
+        { id: 4, name: 'Admin', permissions: { dispatch: true, records: true, investigations: true, admin: true }, channels: ['dispatch', 'tac-1', 'tac-2', 'tac-3', 'department', 'inter-agency'] },
+      ];
+      return;
+    }
+    const resp = await dataStore.fetchPermissionRoles?.();
+    if (resp?.ok && resp.roles) permRoles = resp.roles;
+  }
+
+  function togglePermission(roleIndex, perm) {
+    permRoles = permRoles.map((r, i) => {
+      if (i !== roleIndex) return r;
+      return { ...r, permissions: { ...r.permissions, [perm]: !r.permissions[perm] } };
+    });
+  }
+
+  function toggleChannel(roleIndex, channel) {
+    permRoles = permRoles.map((r, i) => {
+      if (i !== roleIndex) return r;
+      const channels = r.channels.includes(channel)
+        ? r.channels.filter(c => c !== channel)
+        : [...r.channels, channel];
+      return { ...r, channels };
+    });
+  }
+
+  async function savePermissions() {
+    permSaving = true;
+    if (!isEnvBrowser()) {
+      await dataStore.updatePermissionRoles?.(permRoles);
+    }
+    permSaving = false;
+  }
+
+  async function addPermRole() {
+    if (!permNewRoleName.trim()) return;
+    permRoles = [...permRoles, {
+      id: Date.now(),
+      name: permNewRoleName.trim(),
+      permissions: { dispatch: false, records: false, investigations: false, admin: false },
+      channels: [],
+    }];
+    permNewRoleName = '';
+  }
+
+  function removePermRole(index) {
+    permRoles = permRoles.filter((_, i) => i !== index);
+  }
+
+  // ─── Jail & Fines Functions ───
+  async function loadJailFines() {
+    await dataStore.fetchCharges();
+    jfCharges = [...dataStore.chargesList];
+  }
+
+  function startEditCharge(charge) {
+    jfEditingId = charge.id;
+    jfEditFine = charge.fine;
+    jfEditJail = charge.jailTime;
+    jfEditMaxJail = charge.maxJail;
+  }
+
+  function cancelEditCharge() {
+    jfEditingId = null;
+  }
+
+  async function saveChargeEdit(charge) {
+    jfSaving = charge.id;
+    jfCharges = jfCharges.map(c => {
+      if (c.id !== charge.id) return c;
+      return { ...c, fine: Number(jfEditFine), jailTime: Number(jfEditJail), maxJail: Number(jfEditMaxJail) };
+    });
+    await dataStore.updateCharge?.({
+      chargeId: charge.id,
+      fine: Number(jfEditFine),
+      jailTime: Number(jfEditJail),
+      maxJail: Number(jfEditMaxJail),
+    });
+    jfCharges = [...dataStore.chargesList];
+    jfEditingId = null;
+    jfSaving = null;
+  }
+
+  // ─── License Functions ───
+  async function loadLicenses() {
+    await dataStore.fetchLicenseTypes();
+  }
+
+  async function addLicense() {
+    if (!licNewName.trim()) return;
+    licSaving = true;
+    await dataStore.createLicenseType({
+      name: licNewName.trim(),
+      description: licNewDesc.trim(),
+    });
+    licNewName = '';
+    licNewDesc = '';
+    licSaving = false;
+  }
+
+  async function toggleLicenseActive(lic) {
+    await dataStore.updateLicenseType({
+      id: lic.id,
+      active: lic.active ? 0 : 1,
+    });
+  }
+
+  async function removeLicense(lic) {
+    await dataStore.deleteLicenseType(lic.id);
   }
 
   function formatDate(dateStr) {
@@ -279,6 +585,10 @@
     hotkeysStore.updateBinding(recordingHotkey, combo);
     recordingHotkey = null;
     recordedCombo = '';
+  }
+
+  function hotkeyParts(action) {
+    return normalizeHotkeyBinding(hotkeysStore.bindings[action], hotkeysStore.defaults[action]).split('+');
   }
 
   onMount(() => {
@@ -375,6 +685,135 @@
             </button>
           </div>
         </section>
+
+        {#if isStandaloneFramework}
+          <section class="settings-section">
+            <h3 class="section-title">Officer name</h3>
+            <p class="section-desc">
+              Custom first and last name for this MDT (rank line, units, reports). Saved locally on this PC. Clear both fields and save to restore the default name from standalone / FiveM.
+            </p>
+            <div class="display-name-form">
+              <input
+                type="text"
+                class="text-input"
+                placeholder="First name"
+                bind:value={displayFirstInput}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') saveDisplayName();
+                }}
+              />
+              <input
+                type="text"
+                class="text-input"
+                placeholder="Last name"
+                bind:value={displayLastInput}
+                onkeydown={(e) => {
+                  if (e.key === 'Enter') saveDisplayName();
+                }}
+              />
+              <button class="btn-primary" onclick={saveDisplayName}>
+                <Save size={13} strokeWidth={2} />
+                Save
+              </button>
+            </div>
+          </section>
+        {/if}
+
+        <section class="settings-section" data-mdt-no-ui-sound>
+          <h3 class="section-title sound-title">
+            <Volume2 size={15} strokeWidth={1.8} />
+            Sound effects
+          </h3>
+          <p class="section-desc">
+            GTA frontend sounds for MDT. Stored locally (same as theme). Master off silences gameplay hooks; Preview always plays.
+          </p>
+
+          <div class="sound-controls">
+            <div class="sound-row">
+              <label class="sound-label" for="sound-master">Master</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-master"
+                  checked={mdtStore.settings.sounds?.master ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ master: v })}
+                />
+              </span>
+            </div>
+
+            <div class="sound-row">
+              <label class="sound-label" for="sound-biometric">Biometric login</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-biometric"
+                  checked={mdtStore.settings.sounds?.biometric ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ biometric: v })}
+                />
+                <button type="button" class="btn-sound-preview" onclick={() => previewMdtSound('biometric')}>Preview</button>
+              </span>
+            </div>
+
+            <div class="sound-row">
+              <label class="sound-label" for="sound-status">Unit status change</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-status"
+                  checked={mdtStore.settings.sounds?.status ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ status: v })}
+                />
+                <button type="button" class="btn-sound-preview" onclick={() => previewMdtSound('status')}>Preview</button>
+              </span>
+            </div>
+
+            <div class="sound-row">
+              <label class="sound-label" for="sound-dashboard">Dashboard (first load after login)</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-dashboard"
+                  checked={mdtStore.settings.sounds?.dashboard ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ dashboard: v })}
+                />
+                <button type="button" class="btn-sound-preview" onclick={() => previewMdtSound('dashboard')}>Preview</button>
+              </span>
+            </div>
+
+            <div class="sound-row">
+              <label class="sound-label" for="sound-ui-click">UI clicks (buttons / nav)</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-ui-click"
+                  checked={mdtStore.settings.sounds?.uiClick ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ uiClick: v })}
+                />
+                <button type="button" class="btn-sound-preview" onclick={() => previewMdtSound('ui_click')}>Preview</button>
+              </span>
+            </div>
+
+            <div class="sound-preset-row">
+              <span class="sound-label">UI click preset</span>
+              <select
+                class="text-input sound-preset-select"
+                value={mdtStore.settings.sounds?.uiClickPreset || 'exec_navigate'}
+                onchange={(e) => patchMdtSounds({ uiClickPreset: e.currentTarget.value })}
+              >
+                {#each UI_CLICK_PRESETS as p (p.id)}
+                  <option value={p.id}>{p.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <div class="sound-row">
+              <label class="sound-label" for="sound-logout">Logout</label>
+              <span class="sound-row-actions">
+                <MdtSwitch
+                  id="sound-logout"
+                  checked={mdtStore.settings.sounds?.logout ?? true}
+                  onCheckedChange={(v) => patchMdtSounds({ logout: v })}
+                />
+                <button type="button" class="btn-sound-preview" onclick={() => previewMdtSound('logout')}>Preview</button>
+              </span>
+            </div>
+          </div>
+        </section>
       </div>
 
     {:else if activeTab === 'hotkeys'}
@@ -399,9 +838,9 @@
                     </button>
                   {:else}
                     <button class="hotkey-binding" onclick={() => startRecording(action)}>
-                      {#each hotkeysStore.bindings[action].split('+') as part, i}
+                      {#each hotkeyParts(action) as part, i (`${action}:${i}:${part}`)}
                         <kbd class="hotkey-key">{part}</kbd>
-                        {#if i < hotkeysStore.bindings[action].split('+').length - 1}
+                        {#if i < hotkeyParts(action).length - 1}
                           <span class="hotkey-plus">+</span>
                         {/if}
                       {/each}
@@ -584,14 +1023,15 @@
                           <label class="field-label">Certifications</label>
                           <div class="cert-checks">
                             {#each certifications as cert}
-                              <label class="cert-check">
-                                <input
-                                  type="checkbox"
-                                  checked={editCerts.includes(cert)}
-                                  onchange={() => toggleCert(cert)}
-                                />
-                                <span class="cert-check-label">{cert}</span>
-                              </label>
+                              <MdtCheckbox
+                                class="cert-check"
+                                checkedValue={editCerts.includes(cert)}
+                                onCheckedChange={() => toggleCert(cert)}
+                              >
+                                {#snippet children()}
+                                  <span class="cert-check-label">{cert}</span>
+                                {/snippet}
+                              </MdtCheckbox>
                             {/each}
                             {#if certifications.length === 0}
                               <span class="text-muted">No certifications configured</span>
@@ -656,11 +1096,14 @@
               <textarea class="field-textarea" bind:value={annContent} placeholder="Write announcement content..." rows="4"></textarea>
             </div>
             <div class="ann-footer">
-              <label class="pin-toggle">
-                <input type="checkbox" bind:checked={annPinned} />
-                <Pin size={13} strokeWidth={2} />
-                <span>Pin announcement</span>
-              </label>
+              <MdtCheckbox class="pin-toggle" bind:checked={annPinned}>
+                {#snippet children()}
+                  <span class="pin-toggle-inner">
+                    <Pin size={13} strokeWidth={2} />
+                    <span>Pin announcement</span>
+                  </span>
+                {/snippet}
+              </MdtCheckbox>
               <button class="btn-primary" onclick={submitAnnouncement} disabled={annSaving || !annTitle.trim() || !annContent.trim()}>
                 {#if annSaving}
                   <Loader2 size={13} strokeWidth={2} class="spin" />
@@ -730,7 +1173,7 @@
           <div class="sys-fields">
             <div class="sys-field">
               <div class="sys-field-header">
-                <label class="field-label">Message of the Day</label>
+                <label class="field-label">Toolbar line / quotes</label>
                 <button
                   class="btn-save-sm"
                   onclick={() => saveSetting('motd')}
@@ -747,8 +1190,8 @@
               <textarea
                 class="field-textarea"
                 bind:value={localSettings.motd}
-                placeholder="Welcome message displayed on the dashboard..."
-                rows="3"
+                placeholder="One line = one word or quote. Multiple lines = random line every ~45s in the toolbar center."
+                rows="6"
               ></textarea>
             </div>
 
@@ -930,6 +1373,215 @@
           </div>
         {/if}
       </div>
+
+    {:else if activeTab === 'permissions'}
+      <div class="content-panel" class:mounted>
+        <section class="settings-section">
+          <h3 class="section-title">Role-Based Permissions</h3>
+          <p class="section-desc">Configure what each role can access and which radio channels they can interact with.</p>
+
+          <div class="perm-roles">
+            {#each permRoles as role, ri (role.id)}
+              <div class="perm-role-card">
+                <div class="perm-role-header">
+                  <button class="perm-role-toggle" onclick={() => permExpandedRole = permExpandedRole === role.id ? null : role.id}>
+                    {#if permExpandedRole === role.id}
+                      <ChevronDown size={14} strokeWidth={2} />
+                    {:else}
+                      <ChevronRight size={14} strokeWidth={2} />
+                    {/if}
+                    <span class="perm-role-name">{role.name}</span>
+                  </button>
+                  <button class="btn-remove-sm" onclick={() => removePermRole(ri)}>
+                    <Trash2 size={12} strokeWidth={2} />
+                  </button>
+                </div>
+
+                {#if permExpandedRole === role.id}
+                  <div class="perm-role-body">
+                    <div class="perm-section">
+                      <span class="perm-section-label">Permissions</span>
+                      <div class="perm-toggles">
+                        {#each PERMISSION_CATEGORIES as perm (perm)}
+                          <label class="perm-toggle-item">
+                            <input
+                              type="checkbox"
+                              class="mdt-checkbox-input"
+                              checked={role.permissions[perm]}
+                              onchange={() => togglePermission(ri, perm)}
+                            />
+                            <span class="mdt-checkbox-box" aria-hidden="true">
+                              <svg class="mdt-checkbox-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                <path d="M5 13l4 4L19 7" />
+                              </svg>
+                            </span>
+                            <span class="perm-toggle-label">{perm}</span>
+                          </label>
+                        {/each}
+                      </div>
+                    </div>
+
+                    <div class="perm-section">
+                      <span class="perm-section-label">Channel Access</span>
+                      <div class="perm-toggles">
+                        {#each CHANNEL_LIST as ch (ch)}
+                          <label class="perm-toggle-item">
+                            <input
+                              type="checkbox"
+                              class="mdt-checkbox-input"
+                              checked={role.channels.includes(ch)}
+                              onchange={() => toggleChannel(ri, ch)}
+                            />
+                            <span class="mdt-checkbox-box" aria-hidden="true">
+                              <svg class="mdt-checkbox-tick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                                <path d="M5 13l4 4L19 7" />
+                              </svg>
+                            </span>
+                            <span class="perm-toggle-label">{ch}</span>
+                          </label>
+                        {/each}
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </div>
+
+          <div class="perm-add-row">
+            <input type="text" class="field-input" placeholder="New role name..." bind:value={permNewRoleName} onkeydown={(e) => { if (e.key === 'Enter') addPermRole(); }} />
+            <button class="btn-secondary" onclick={addPermRole} disabled={!permNewRoleName.trim()}>
+              <Plus size={14} strokeWidth={2} /> Add Role
+            </button>
+          </div>
+
+          <button class="btn-save" onclick={savePermissions} disabled={permSaving}>
+            <Save size={14} strokeWidth={2} />
+            {permSaving ? 'Saving...' : 'Save Permissions'}
+          </button>
+        </section>
+      </div>
+
+    {:else if activeTab === 'jail_fines'}
+      <div class="content-panel wide" class:mounted>
+        <section class="settings-section">
+          <h3 class="section-title">Jail & Fines</h3>
+          <p class="section-desc">Edit charge penalties. Changes apply to future reports only.</p>
+
+          <div class="panel-header">
+            <div class="search-box">
+              <Search size={14} strokeWidth={2} />
+              <input type="text" class="search-input" placeholder="Search charges..." bind:value={jfSearch} />
+              {#if jfSearch}
+                <button class="search-clear" onclick={() => jfSearch = ''}>
+                  <X size={12} strokeWidth={2} />
+                </button>
+              {/if}
+            </div>
+          </div>
+
+          <div class="audit-table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Charge</th>
+                  <th>Category</th>
+                  <th>Severity</th>
+                  <th>Jail (mo)</th>
+                  <th>Max Jail</th>
+                  <th>Fine ($)</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each filteredJfCharges as charge (charge.id)}
+                  <tr class="audit-row">
+                    <td class="td-charge-name">{charge.charge}</td>
+                    <td class="td-category">{charge.category?.replace(/_/g, ' ')}</td>
+                    <td>
+                      <span class="severity-badge" class:infraction={charge.severity === 'infraction'} class:misdemeanor={charge.severity === 'misdemeanor'} class:felony={charge.severity === 'felony'}>
+                        {charge.severity}
+                      </span>
+                    </td>
+                    {#if jfEditingId === charge.id}
+                      <td><input type="number" class="field-input compact" bind:value={jfEditJail} min="0" /></td>
+                      <td><input type="number" class="field-input compact" bind:value={jfEditMaxJail} min="0" /></td>
+                      <td><input type="number" class="field-input compact" bind:value={jfEditFine} min="0" /></td>
+                      <td class="td-actions">
+                        <button class="btn-save-sm" onclick={() => saveChargeEdit(charge)} disabled={jfSaving === charge.id}>
+                          <Check size={12} strokeWidth={2} />
+                        </button>
+                        <button class="btn-cancel-sm" onclick={cancelEditCharge}>
+                          <X size={12} strokeWidth={2} />
+                        </button>
+                      </td>
+                    {:else}
+                      <td class="td-mono">{charge.jailTime}</td>
+                      <td class="td-mono">{charge.maxJail}</td>
+                      <td class="td-mono">${(charge.fine || 0).toLocaleString()}</td>
+                      <td class="td-actions">
+                        <button class="btn-edit-sm" onclick={() => startEditCharge(charge)} title="Edit penalties">
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                        </button>
+                      </td>
+                    {/if}
+                  </tr>
+                {/each}
+                {#if filteredJfCharges.length === 0}
+                  <tr>
+                    <td colspan="7" class="empty-row">
+                      <div class="empty-state">
+                        <Scale size={28} strokeWidth={1.2} />
+                        <span>No charges found</span>
+                      </div>
+                    </td>
+                  </tr>
+                {/if}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+    {:else if activeTab === 'licenses'}
+      <div class="content-panel" class:mounted>
+        <section class="settings-section">
+          <h3 class="section-title">License Management</h3>
+          <p class="section-desc">Configure available license types that can be assigned to citizens.</p>
+
+          <div class="license-list">
+            {#each licenseTypes as lic (lic.id)}
+              <div class="license-card" class:inactive={!lic.active}>
+                <div class="license-info">
+                  <span class="license-name">{lic.name}</span>
+                  <span class="license-desc">{lic.description || 'No description'}</span>
+                </div>
+                <div class="license-actions">
+                  <button class="perm-toggle-btn" class:active={lic.active} onclick={() => toggleLicenseActive(lic)} title={lic.active ? 'Disable' : 'Enable'}>
+                    {#if lic.active}
+                      <Check size={12} strokeWidth={2} />
+                    {:else}
+                      <X size={12} strokeWidth={2} />
+                    {/if}
+                    {lic.active ? 'Active' : 'Inactive'}
+                  </button>
+                  <button class="btn-remove-sm" onclick={() => removeLicense(lic)}>
+                    <Trash2 size={12} strokeWidth={2} />
+                  </button>
+                </div>
+              </div>
+            {/each}
+          </div>
+
+          <div class="license-add-form">
+            <input type="text" class="field-input" placeholder="License name..." bind:value={licNewName} />
+            <input type="text" class="field-input" placeholder="Description (optional)..." bind:value={licNewDesc} />
+            <button class="btn-secondary" onclick={addLicense} disabled={!licNewName.trim() || licSaving}>
+              <Plus size={14} strokeWidth={2} /> Add License
+            </button>
+          </div>
+        </section>
+      </div>
     {/if}
   </div>
 </div>
@@ -1075,7 +1727,7 @@
   }
 
   .theme-swatch:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .theme-swatch.active {
@@ -1152,6 +1804,19 @@
     max-width: calc(240px * var(--mdt-scale));
   }
 
+  .display-name-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .display-name-form .text-input {
+    flex: 1;
+    min-width: calc(120px * var(--mdt-scale));
+    max-width: calc(200px * var(--mdt-scale));
+  }
+
   .text-input {
     width: 100%;
     padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
@@ -1195,7 +1860,7 @@
   }
 
   .btn-primary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-primary:disabled {
@@ -1225,10 +1890,11 @@
   }
 
   .btn-secondary:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-icon {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -1239,7 +1905,12 @@
     background: var(--mdt-surface-2);
     color: var(--mdt-text-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+  }
+  .btn-icon::after {
+    content: '';
+    position: absolute;
+    inset: calc(-6px * var(--mdt-scale));
   }
 
   .btn-icon:hover {
@@ -1272,7 +1943,7 @@
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
   }
 
   .btn-save-sm:hover {
@@ -1281,7 +1952,7 @@
   }
 
   .btn-save-sm:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-save-sm:disabled {
@@ -1429,8 +2100,8 @@
     height: calc(24px * var(--mdt-scale));
     border-radius: 50%;
     object-fit: cover;
-    flex-shrink: 0;
     border: calc(1px * var(--mdt-scale)) solid var(--mdt-border);
+    flex-shrink: 0;
   }
 
   .roster-avatar-empty {
@@ -1616,18 +2287,13 @@
     gap: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
   }
 
-  .cert-check {
-    display: flex;
-    align-items: center;
+  :global(.cert-check.mdt-checkbox) {
     gap: calc(6px * var(--mdt-scale));
-    cursor: pointer;
   }
 
-  .cert-check input[type="checkbox"] {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    accent-color: var(--mdt-accent);
-    cursor: pointer;
+  :global(.cert-check.mdt-checkbox .mdt-checkbox-label) {
+    font-weight: 500;
+    color: inherit;
   }
 
   .cert-check-label {
@@ -1694,20 +2360,21 @@
     justify-content: space-between;
   }
 
-  .pin-toggle {
-    display: flex;
-    align-items: center;
+  :global(.pin-toggle.mdt-checkbox) {
     gap: calc(6px * var(--mdt-scale));
     font-size: calc(12px * var(--mdt-scale));
     color: var(--mdt-text-dim);
-    cursor: pointer;
   }
 
-  .pin-toggle input[type="checkbox"] {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-    accent-color: var(--mdt-accent);
-    cursor: pointer;
+  .pin-toggle-inner {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  :global(.pin-toggle.mdt-checkbox .mdt-checkbox-label) {
+    font-weight: 500;
+    color: inherit;
   }
 
   .ann-list {
@@ -2056,7 +2723,7 @@
     background: transparent;
     color: var(--mdt-text-muted);
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
     padding: 0;
   }
 
@@ -2078,5 +2745,385 @@
   @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
+  }
+
+  /* ─── Permissions Tab ─── */
+  .perm-roles {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .perm-role-card {
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    background: var(--mdt-surface);
+    overflow: hidden;
+  }
+
+  .perm-role-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+  }
+
+  .perm-role-toggle {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    background: none;
+    border: none;
+    color: var(--mdt-text);
+    font-family: inherit;
+    font-size: calc(13px * var(--mdt-scale));
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .perm-role-body {
+    padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    border-top: 1px solid var(--mdt-border);
+    display: flex;
+    flex-direction: column;
+    gap: calc(14px * var(--mdt-scale));
+    animation: slideDown 0.2s ease forwards;
+  }
+
+  .perm-section {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .perm-section-label {
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .perm-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .perm-toggle-item {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(5px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius-sm);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-dim);
+    font-size: calc(11px * var(--mdt-scale));
+    cursor: pointer;
+    transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+    text-transform: capitalize;
+  }
+
+  .perm-toggle-item:has(.mdt-checkbox-input:checked) {
+    border-color: color-mix(in srgb, var(--mdt-accent) 30%, transparent);
+    background: var(--mdt-accent-dim);
+    color: var(--mdt-accent);
+  }
+
+  .perm-toggle-item .mdt-checkbox-box {
+    border-color: var(--mdt-border);
+    background: var(--mdt-surface-3);
+  }
+
+  .perm-toggle-item .mdt-checkbox-input:checked + .mdt-checkbox-box {
+    background: var(--mdt-accent);
+    border-color: var(--mdt-accent);
+  }
+
+  .perm-add-row {
+    display: flex;
+    gap: calc(8px * var(--mdt-scale));
+    align-items: center;
+    margin-top: calc(8px * var(--mdt-scale));
+  }
+
+  .perm-add-row .field-input {
+    flex: 1;
+  }
+
+  .btn-save {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    background: var(--mdt-accent);
+    color: var(--mdt-bg);
+    border: none;
+    border-radius: var(--mdt-radius);
+    font-family: inherit;
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 600;
+    cursor: pointer;
+    align-self: flex-start;
+    margin-top: calc(8px * var(--mdt-scale));
+    transition: opacity 0.15s ease;
+  }
+
+  .btn-save:hover { opacity: 0.9; }
+  .btn-save:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-remove-sm {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(26px * var(--mdt-scale));
+    height: calc(26px * var(--mdt-scale));
+    border: 1px solid color-mix(in srgb, var(--mdt-error) 20%, var(--mdt-border));
+    background: color-mix(in srgb, var(--mdt-error) 8%, transparent);
+    color: var(--mdt-error);
+    border-radius: var(--mdt-radius-sm);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.12s ease;
+  }
+
+  .btn-remove-sm:hover {
+    background: color-mix(in srgb, var(--mdt-error) 15%, transparent);
+  }
+
+  .btn-cancel-sm {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(26px * var(--mdt-scale));
+    height: calc(26px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-muted);
+    border-radius: var(--mdt-radius-sm);
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.12s ease;
+  }
+
+  .btn-cancel-sm:hover { color: var(--mdt-text); }
+
+  .btn-edit-sm {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: calc(26px * var(--mdt-scale));
+    height: calc(26px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-muted);
+    border-radius: var(--mdt-radius-sm);
+    cursor: pointer;
+    padding: 0;
+    transition: color 0.12s ease, border-color 0.12s ease;
+  }
+
+  .btn-edit-sm:hover {
+    color: var(--mdt-accent);
+    border-color: color-mix(in srgb, var(--mdt-accent) 25%, transparent);
+  }
+
+  .td-actions {
+    display: flex;
+    gap: calc(4px * var(--mdt-scale));
+    justify-content: flex-end;
+  }
+
+  .td-charge-name {
+    font-weight: 500;
+    color: var(--mdt-text);
+  }
+
+  .field-input.compact {
+    width: calc(80px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  /* Severity badges for jail_fines */
+  .severity-badge {
+    display: inline-flex;
+    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border-radius: calc(99px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    text-transform: capitalize;
+    border: 1px solid transparent;
+  }
+
+  .severity-badge.infraction {
+    color: var(--mdt-text-muted);
+    background: rgba(228, 232, 239, 0.08);
+    border-color: rgba(228, 232, 239, 0.15);
+  }
+
+  .severity-badge.misdemeanor {
+    color: var(--mdt-warning);
+    background: rgba(251, 191, 36, 0.1);
+    border-color: rgba(251, 191, 36, 0.2);
+  }
+
+  .severity-badge.felony {
+    color: var(--mdt-error);
+    background: rgba(248, 113, 113, 0.1);
+    border-color: rgba(248, 113, 113, 0.2);
+  }
+
+  /* ─── Licenses Tab ─── */
+  .license-list {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .license-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    background: var(--mdt-surface);
+    transition: opacity 0.15s ease;
+  }
+
+  .license-card.inactive {
+    opacity: 0.5;
+  }
+
+  .license-info {
+    display: flex;
+    flex-direction: column;
+    gap: calc(2px * var(--mdt-scale));
+  }
+
+  .license-name {
+    font-size: calc(13px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+  }
+
+  .license-desc {
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+  }
+
+  .license-actions {
+    display: flex;
+    gap: calc(6px * var(--mdt-scale));
+    align-items: center;
+  }
+
+  .perm-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(4px * var(--mdt-scale));
+    padding: calc(4px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius-sm);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-muted);
+    font-family: inherit;
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 500;
+    cursor: pointer;
+    transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+  }
+
+  .perm-toggle-btn.active {
+    color: var(--mdt-success);
+    border-color: color-mix(in srgb, var(--mdt-success) 25%, transparent);
+    background: color-mix(in srgb, var(--mdt-success) 10%, transparent);
+  }
+
+  .license-add-form {
+    display: flex;
+    gap: calc(8px * var(--mdt-scale));
+    align-items: center;
+    margin-top: calc(10px * var(--mdt-scale));
+  }
+
+  .license-add-form .field-input {
+    flex: 1;
+  }
+
+  .sound-title {
+    display: flex;
+    align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+  }
+
+  .sound-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-top: calc(4px * var(--mdt-scale));
+  }
+
+  .sound-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: calc(12px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) 0;
+    border-bottom: 1px solid var(--mdt-border);
+    font-size: calc(12px * var(--mdt-scale));
+  }
+
+  .sound-row:last-of-type {
+    border-bottom: none;
+  }
+
+  .sound-label {
+    flex: 1;
+    color: var(--mdt-text);
+    cursor: pointer;
+    font-weight: inherit;
+  }
+
+  .sound-row-actions {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .btn-sound-preview {
+    padding: calc(4px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius-sm);
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-muted);
+    font-family: inherit;
+    font-size: calc(10px * var(--mdt-scale));
+    cursor: pointer;
+  }
+
+  .btn-sound-preview:hover {
+    color: var(--mdt-text);
+    border-color: var(--mdt-border-2);
+  }
+
+  .sound-preset-row {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) 0 calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .sound-preset-row .sound-label {
+    font-size: calc(12px * var(--mdt-scale));
+  }
+
+  .sound-preset-select {
+    width: 100%;
+    max-width: 320px;
   }
 </style>

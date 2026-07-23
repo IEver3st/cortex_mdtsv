@@ -8,8 +8,9 @@
     Settings,
     Menu,
     LogOut
-  } from 'lucide-svelte';
+  } from '@lucide/svelte';
   import { mdtStore } from '../stores/mdt.svelte.js';
+  import { sidebarTooltip } from '../actions/sidebarTooltip.js';
 
   const NAV_ITEMS = [
     { id: 'civ-dashboard', label: 'Dashboard',    icon: LayoutGrid },
@@ -36,7 +37,7 @@
 </script>
 
 <aside class="sidebar" class:collapsed>
-  <button class="nav-item toggle-btn" onclick={() => mdtStore.toggleSidebar()} title={collapsed ? 'Expand' : 'Collapse'}>
+  <button class="nav-item toggle-btn" use:sidebarTooltip={collapsed ? 'Expand' : ''} onclick={() => mdtStore.toggleSidebar()}>
     <span class="nav-icon" class:rotated={!collapsed}>
       <Menu size="100%" />
     </span>
@@ -53,17 +54,14 @@
       <button
         class="nav-item"
         class:active={active === item.id}
+        use:sidebarTooltip={collapsed ? item.label : ''}
         onclick={() => navigate(item.id)}
-        title={collapsed ? item.label : ''}
       >
         <span class="nav-icon">
           <Icon size="100%" />
         </span>
         {#if !collapsed}
           <span class="nav-label">{item.label}</span>
-        {/if}
-        {#if active === item.id}
-          <div class="active-indicator"></div>
         {/if}
       </button>
     {/each}
@@ -76,8 +74,8 @@
       <button
         class="nav-item"
         class:active={active === item.id}
+        use:sidebarTooltip={collapsed ? item.label : ''}
         onclick={() => navigate(item.id)}
-        title={collapsed ? item.label : ''}
       >
         <span class="nav-icon">
           <Icon size="100%" />
@@ -85,16 +83,13 @@
         {#if !collapsed}
           <span class="nav-label">{item.label}</span>
         {/if}
-        {#if active === item.id}
-          <div class="active-indicator"></div>
-        {/if}
       </button>
     {/each}
 
     <button
       class="nav-item nav-item-logout"
+      use:sidebarTooltip={collapsed ? 'Logout' : ''}
       onclick={handleLogout}
-      title={collapsed ? 'Logout' : ''}
     >
       <span class="nav-icon">
         <LogOut size="100%" />
@@ -108,14 +103,15 @@
 
 <style>
   .sidebar {
+    --sb: var(--mdt-sidebar-scale);
     width: var(--mdt-sidebar-expanded);
     min-width: var(--mdt-sidebar-expanded);
     height: 100%;
     background: var(--mdt-sidebar);
-    border-right: 1px solid var(--civ-border, var(--mdt-border));
+    border-right: 1px solid var(--mdt-border);
     display: flex;
     flex-direction: column;
-    padding: calc(8px * var(--mdt-scale)) 0;
+    padding: calc(8px * var(--mdt-scale) * var(--sb)) 0;
     transition: width 0.35s cubic-bezier(0.16, 1, 0.3, 1),
                 min-width 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     overflow: hidden;
@@ -125,31 +121,32 @@
   .sidebar.collapsed {
     width: var(--mdt-sidebar-width);
     min-width: var(--mdt-sidebar-width);
+    overflow: visible;
   }
 
   .nav-main {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
+    gap: calc(2px * var(--mdt-scale) * var(--sb));
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0 calc(6px * var(--mdt-scale));
+    padding: 0 calc(6px * var(--mdt-scale) * var(--sb));
   }
 
   .nav-bottom {
     display: flex;
     flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
-    padding: 0 calc(6px * var(--mdt-scale));
+    gap: calc(2px * var(--mdt-scale) * var(--sb));
+    padding: 0 calc(6px * var(--mdt-scale) * var(--sb));
   }
 
   .nav-item {
     position: relative;
     display: flex;
     align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale) * var(--sb));
+    padding: calc(8px * var(--mdt-scale) * var(--sb)) calc(10px * var(--mdt-scale) * var(--sb));
     border-radius: var(--mdt-radius);
     border: none;
     background: transparent;
@@ -159,24 +156,39 @@
     overflow: hidden;
     transition: background 0.15s ease, color 0.15s ease;
     font-family: inherit;
-    font-size: calc(13px * var(--mdt-scale));
+    font-size: calc(13px * var(--mdt-scale) * var(--sb));
     width: 100%;
     text-align: left;
   }
 
   .nav-item:hover {
-    background: var(--mdt-surface-3);
     color: var(--mdt-text);
   }
 
   .nav-item.active {
-    background: var(--civ-accent-dim, var(--mdt-accent-dim));
-    color: var(--civ-accent, var(--mdt-accent));
+    background: transparent;
+    color: var(--mdt-text-dim);
+  }
+
+  .nav-item.active .nav-icon {
+    color: var(--mdt-accent);
+  }
+
+  .nav-item.active .nav-label {
+    color: var(--mdt-text-dim);
+  }
+
+  .nav-item.active:hover .nav-label {
+    color: var(--mdt-text);
+  }
+
+  .nav-item.active:hover .nav-icon {
+    color: var(--mdt-accent);
   }
 
   .nav-icon {
-    width: calc(20px * var(--mdt-scale));
-    height: calc(20px * var(--mdt-scale));
+    width: calc(20px * var(--mdt-scale) * var(--sb));
+    height: calc(20px * var(--mdt-scale) * var(--sb));
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -196,44 +208,36 @@
 
   .nav-divider {
     height: 1px;
-    background: var(--civ-border, var(--mdt-border));
-    margin: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    background: var(--mdt-border);
+    margin: calc(6px * var(--mdt-scale) * var(--sb)) calc(10px * var(--mdt-scale) * var(--sb));
   }
 
   .toggle-btn {
-    margin: 0 calc(6px * var(--mdt-scale));
+    margin: 0 calc(6px * var(--mdt-scale) * var(--sb));
   }
 
-  .active-indicator {
-    position: absolute;
-    left: 0;
-    top: 25%;
-    bottom: 25%;
-    width: calc(3px * var(--mdt-scale));
-    border-radius: 0 999px 999px 0;
-    background: var(--civ-accent, var(--mdt-accent));
-    box-shadow: 0 0 8px var(--civ-accent-glow, var(--mdt-accent-glow));
+  .sidebar.collapsed .toggle-btn {
+    margin: 0;
   }
 
   .collapsed .nav-item {
     justify-content: center;
-    padding: calc(10px * var(--mdt-scale));
+    padding: calc(10px * var(--mdt-scale) * var(--sb));
   }
 
   .collapsed .nav-label {
     display: none;
   }
 
-  .collapsed .active-indicator {
-    left: 0;
-  }
-
   .nav-item-logout {
-    color: var(--mdt-text-muted);
+    color: var(--mdt-error);
   }
 
   .nav-item-logout:hover {
-    background: rgba(248, 113, 113, 0.10);
-    color: var(--mdt-error);
+    color: #fca5a5;
+  }
+
+  .nav-item-logout .nav-icon {
+    color: inherit;
   }
 </style>

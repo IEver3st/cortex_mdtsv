@@ -1,0 +1,602 @@
+[
+  {
+    "camId": "PCB01",
+    "label": "Pacific Bank: Lobby",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 257.45,
+      "y": 210.07,
+      "z": 109.08
+    },
+    "rotation": {
+      "x": -25.0,
+      "y": 0.0,
+      "z": 28.05
+    },
+    "image": "https://files.fivemerr.com/images/45bab512-5836-4449-8831-fbe67d7c886f.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "PCB02",
+    "label": "Pacific Bank: Foyer",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 232.86,
+      "y": 221.46,
+      "z": 107.83
+    },
+    "rotation": {
+      "x": -25.0,
+      "y": 0.0,
+      "z": -140.91
+    },
+    "image": "https://files.fivemerr.com/images/4a50b347-aa12-4df2-9efc-cf3f38cc1d41.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "PCB03",
+    "label": "Pacific Bank: Vault",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 252.27,
+      "y": 225.52,
+      "z": 103.99
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -74.87
+    },
+    "image": "https://files.fivemerr.com/images/7c1604e9-480b-41d2-9c6b-1899c763fb51.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "LTD01",
+    "label": "Ltd Grove St",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -53.14,
+      "y": -1746.71,
+      "z": 31.54
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -168.9182
+    },
+    "image": "https://files.fivemerr.com/images/1ff40a9c-ee6e-4c6f-9273-15bae452375e.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "RLQ01",
+    "label": "Rob's Liqour Prosperity St",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -1482.9,
+      "y": -380.463,
+      "z": 42.363
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 79.53281
+    },
+    "image": "https://files.fivemerr.com/images/b5bcfe95-3c3f-4dde-a0b9-2024ea5bfa08.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "RLQ02",
+    "label": "Rob's Liqour San Andreas Ave",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -1224.874,
+      "y": -911.094,
+      "z": 14.401
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -6.778894
+    },
+    "image": "https://files.fivemerr.com/images/f4aba38b-faa0-4050-ab00-ec55d8a1068d.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "LTD02",
+    "label": "Ltd Ginger St",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -718.153,
+      "y": -909.211,
+      "z": 21.49
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -137.1431
+    },
+    "image": "https://files.fivemerr.com/images/ca78a638-f17a-4456-9061-1648b593e394.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24701",
+    "label": "24/7 Innocence Blvd",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 23.885,
+      "y": -1342.441,
+      "z": 31.672
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -142.9191
+    },
+    "image": "https://files.fivemerr.com/images/ca78a638-f17a-4456-9061-1648b593e394.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "RLQ03",
+    "label": "Rob's Liqour El Rancho Blvd",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 1133.024,
+      "y": -978.712,
+      "z": 48.515
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -137.302
+    },
+    "image": "https://files.fivemerr.com/images/63f7c1dd-c537-44a4-9076-2dd9227dfa97.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "LTD03",
+    "label": "Ltd West Mirror Drive",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 1151.93,
+      "y": -320.389,
+      "z": 71.33
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -119.4468
+    },
+    "image": "https://files.fivemerr.com/images/686831ef-ed81-4882-bd23-72c2754e38ab.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24702",
+    "label": "24/7 Clinton Ave",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 383.402,
+      "y": 328.915,
+      "z": 105.541
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 118.585
+    },
+    "image": "https://files.fivemerr.com/images/2b19a04e-0f1d-4725-8262-1da93b30391e.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "LTD04",
+    "label": "Ltd Banham Canyon Dr",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -1832.057,
+      "y": 789.389,
+      "z": 140.436
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -91.481
+    },
+    "image": "https://files.fivemerr.com/images/c6f53e50-75da-4e4c-806c-08be6822e884.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "RLQ04",
+    "label": "Rob's Liqour Great Ocean Hwy",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -2966.15,
+      "y": 387.067,
+      "z": 17.393
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 32.92229
+    },
+    "image": "https://files.fivemerr.com/images/f25096f5-5724-4f4b-8a75-b7f968dd67ef.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24703",
+    "label": "24/7 Ineseno Road ",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -3046.749,
+      "y": 592.491,
+      "z": 9.808
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -116.673
+    },
+    "image": "https://files.fivemerr.com/images/055956f5-6f62-48a7-80d0-c6d94540b6e4.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24704",
+    "label": "24/7 Barbareno Rd",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -3246.489,
+      "y": 1010.408,
+      "z": 14.705
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -135.2151
+    },
+    "image": "https://files.fivemerr.com/images/14b9a9ff-4cf0-4373-a784-0723bec9c3b2.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24705",
+    "label": "24/7 Route 68",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 539.773,
+      "y": 2664.904,
+      "z": 44.056
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -42.947
+    },
+    "image": "https://files.fivemerr.com/images/4535c506-42dc-4ca9-9f6e-ece7215e1b7f.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "RLQ05",
+    "label": "Rob's Liqour Route 68",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 1169.855,
+      "y": 2711.493,
+      "z": 40.432
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 127.17
+    },
+    "image": "https://files.fivemerr.com/images/b8b8e6ff-234a-461f-8636-02c1c9247aeb.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24706",
+    "label": "24/7 Senora Fwy",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 2673.579,
+      "y": 3281.265,
+      "z": 57.541
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -80.242
+    },
+    "image": "https://files.fivemerr.com/images/cf0b6dc6-3310-441a-ad00-2666fe89c700.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24707",
+    "label": "24/7 Alhambra Dr",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 1966.24,
+      "y": 3749.545,
+      "z": 34.143
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 163.065
+    },
+    "image": "https://files.fivemerr.com/images/6c3eb8b8-c8a5-4a25-895c-44724ac24a6f.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "24708",
+    "label": "24/7 Senora Fwy",
+    "type": "store",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 1729.522,
+      "y": 6419.87,
+      "z": 37.262
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -160.089
+    },
+    "image": "https://files.fivemerr.com/images/64918129-eb25-4bd6-abe7-cc6263e36f1d.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "FLB01",
+    "label": "Fleeca Bank Legion Square",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 144.871,
+      "y": -1043.044,
+      "z": 31.017
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -143.9796
+    },
+    "image": "https://files.fivemerr.com/images/92659204-5c5d-44ab-a14f-68a7f83e01f3.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "FLB02",
+    "label": "Fleeca Bank Hawick/Power",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": 309.341,
+      "y": -281.439,
+      "z": 55.88
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -146.1595
+    },
+    "image": "https://files.fivemerr.com/images/17a41043-bc9d-4a0c-945d-63d03ff4660d.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "FLB03",
+    "label": "Fleeca Bank Hawick/San Vitas",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -355.7643,
+      "y": -52.506,
+      "z": 50.746
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -143.8711
+    },
+    "image": "https://files.fivemerr.com/images/ead3415f-bdc5-447f-9d6f-287c77211388.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "FLB04",
+    "label": "Fleeca Bank Del Perro Blvd",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -1214.226,
+      "y": -335.86,
+      "z": 39.515
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -97.862
+    },
+    "image": "https://files.fivemerr.com/images/6d00ce1d-6078-4a69-8cfb-ebed60cbf833.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "FLB05",
+    "label": "Fleeca Bank Great Ocean Hwy",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -2958.885,
+      "y": 478.983,
+      "z": 17.406
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -34.69595
+    },
+    "image": "https://files.fivemerr.com/images/dbb2ec99-8212-47f2-9f79-e0b787608ce2.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "PLB01",
+    "label": "Paleto Bank",
+    "type": "bank",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -102.939,
+      "y": 6467.668,
+      "z": 33.424
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 24.66
+    },
+    "image": "https://files.fivemerr.com/images/ff06da26-2cd6-4337-a1ca-c738d4267ae5.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "VGY01",
+    "label": "Vangelico Jewelery: Front Right",
+    "type": "jewelry",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -627.54,
+      "y": -239.74,
+      "z": 40.33
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 5.78
+    },
+    "image": "https://files.fivemerr.com/images/348eca1b-17ad-48fc-8f03-1c21bd87dadc.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "VGY02",
+    "label": "Vangelico Jewelery: Front Left",
+    "type": "jewelry",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -627.51,
+      "y": -229.51,
+      "z": 40.24
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": -95.78
+    },
+    "image": "https://files.fivemerr.com/images/707df30b-440e-4e55-ac93-c1878c381cee.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "VGY03",
+    "label": "Vangelico Jewelery: Back Left",
+    "type": "jewelry",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -620.3,
+      "y": -224.31,
+      "z": 40.23
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 165.78
+    },
+    "image": "https://files.fivemerr.com/images/371e5386-c901-451d-a3c4-ce7a371bee86.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  },
+  {
+    "camId": "VGY04",
+    "label": "Vangelico Jewelery: Side",
+    "type": "jewelry",
+    "model": "security_cam_03",
+    "coords": {
+      "x": -622.57,
+      "y": -236.3,
+      "z": 40.31
+    },
+    "rotation": {
+      "x": -35.0,
+      "y": 0.0,
+      "z": 5.78
+    },
+    "image": "https://files.fivemerr.com/images/4c90514e-7a31-4654-a7a9-40864d106028.png",
+    "canRotate": true,
+    "isOnline": true,
+    "spawnsModel": false
+  }
+]

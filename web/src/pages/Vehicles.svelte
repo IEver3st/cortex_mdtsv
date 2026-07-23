@@ -1,4 +1,16 @@
 <script>
+  import { onMount } from 'svelte';
+  import {
+    Car,
+    Search,
+    Clock,
+    ChevronRight,
+    X,
+    RefreshCw,
+    User,
+    Hash,
+    Tag,
+  } from '@lucide/svelte';
   import { mdtStore } from '../lib/stores/mdt.svelte.js';
   import { dataStore } from '../lib/stores/data.svelte.js';
   import { isEnvBrowser } from '../lib/utils/nui.js';
@@ -23,12 +35,12 @@
   const LOT_OPTIONS = ['Downtown Lot', 'Sandy Shores Lot', 'Paleto Bay Lot'];
 
   const MOCK_RESULTS = [
-    { id: 1, vehicle_id: 'VEH001', plate: 'LSPD 001', model: 'Police Cruiser', color: 'Black/White', owner_name: 'LSPD Fleet', registration_status: 'valid', flags: [] },
-    { id: 2, vehicle_id: 'VEH002', plate: 'SA1 KNG', model: 'Sultan RS', color: 'Midnight Blue', owner_name: 'James Sullivan', registration_status: 'valid', flags: ['bolo'] },
-    { id: 3, vehicle_id: 'VEH003', plate: 'XPRD 92', model: 'Dominator GTX', color: 'Red', owner_name: 'Maria Santos', registration_status: 'expired', flags: [] },
-    { id: 4, vehicle_id: 'VEH004', plate: 'GONE 44', model: 'Zentorno', color: 'Matte Black', owner_name: 'Unknown', registration_status: 'stolen', flags: ['stolen', 'fled_scene'] },
-    { id: 5, vehicle_id: 'VEH005', plate: 'NREG 77', model: 'Faggio', color: 'White', owner_name: 'Tony Rizzo', registration_status: 'unregistered', flags: [] },
-    { id: 6, vehicle_id: 'VEH006', plate: 'SUSP 11', model: 'Baller LE', color: 'Silver', owner_name: 'Derek Haines', registration_status: 'suspended', flags: ['wanted'] },
+    { id: 1, vehicle_id: 'VEH001', plate: 'LSPD 001', model: 'Police Cruiser', color: 'Black/White', owner_name: 'LSPD Fleet', registration_status: 'valid', flags: [], vin: 'LSC1FLEET01X9' },
+    { id: 2, vehicle_id: 'VEH002', plate: 'SA1 KNG', model: 'Sultan RS', color: 'Midnight Blue', owner_name: 'James Sullivan', registration_status: 'valid', flags: ['bolo'], vin: 'LSC9X83HK201445' },
+    { id: 3, vehicle_id: 'VEH003', plate: 'XPRD 92', model: 'Dominator GTX', color: 'Red', owner_name: 'Maria Santos', registration_status: 'expired', flags: [], vin: 'LSC7DGT92M3K1' },
+    { id: 4, vehicle_id: 'VEH004', plate: 'GONE 44', model: 'Zentorno', color: 'Matte Black', owner_name: 'Unknown', registration_status: 'stolen', flags: ['stolen', 'fled_scene'], vin: 'LSC4ZNT44UNK0' },
+    { id: 5, vehicle_id: 'VEH005', plate: 'NREG 77', model: 'Faggio', color: 'White', owner_name: 'Tony Rizzo', registration_status: 'unregistered', flags: [], vin: 'LSC5FGG77NREG' },
+    { id: 6, vehicle_id: 'VEH006', plate: 'SUSP 11', model: 'Baller LE', color: 'Silver', owner_name: 'Derek Haines', registration_status: 'suspended', flags: ['wanted'], vin: 'LSC6BLL11SUSP' },
   ];
 
   const MOCK_VEHICLE = {
@@ -58,38 +70,128 @@
   let impoundFee = $state(0);
   let impoundHoldHours = $state(24);
   let submitting = $state(false);
+  let loading = $state(false);
+  let errorMessage = $state('');
 
   let useMock = $derived(isEnvBrowser());
-  let results = $derived(useMock && searchQuery.trim() ? MOCK_RESULTS.filter(v => {
-    const q = searchQuery.toLowerCase();
-    return v.plate.toLowerCase().includes(q) || v.model.toLowerCase().includes(q) || (v.vin || '').toLowerCase().includes(q);
-  }) : (dataStore.vehicleSearchResults || []));
-  let vehicle = $derived(useMock ? (dataStore.selectedVehicle || null) : (dataStore.selectedVehicle || null));
-  let impounds = $derived(useMock ? (dataStore.vehicleImpounds?.length ? dataStore.vehicleImpounds : []) : (dataStore.vehicleImpounds || []));
+  let results = $derived(
+    useMock && searchQuery.trim()
+      ? MOCK_RESULTS.filter((v) => {
+          const q = searchQuery.toLowerCase();
+          return (
+            v.plate.toLowerCase().includes(q) ||
+            v.model.toLowerCase().includes(q) ||
+            (v.vin || '').toLowerCase().includes(q) ||
+            (v.owner_name || '').toLowerCase().includes(q)
+          );
+        })
+      : dataStore.vehicleSearchResults || [],
+  );
+  let vehicle = $derived(useMock ? dataStore.selectedVehicle || null : dataStore.selectedVehicle || null);
+  let impounds = $derived(useMock ? (dataStore.vehicleImpounds?.length ? dataStore.vehicleImpounds : []) : dataStore.vehicleImpounds || []);
   let isDetail = $derived(!!vehicle);
-  let activeImpound = $derived(impounds.find(i => i.status === 'impounded') || null);
-  let pastImpounds = $derived(impounds.filter(i => i.status !== 'impounded'));
+  let activeImpound = $derived(impounds.find((i) => i.status === 'impounded') || null);
+  let pastImpounds = $derived(impounds.filter((i) => i.status !== 'impounded'));
+  let recentlyViewed = $derived(dataStore.recentVehicles || []);
 
-  function handleSearchInput(e) {
-    searchQuery = e.target.value;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    if (!searchQuery.trim()) return;
-    debounceTimer = setTimeout(() => {
-      if (!useMock) {
-        dataStore.searchVehicles(searchQuery.trim());
+  function formatViewedAgo(ts) {
+    if (ts == null || Number.isNaN(Number(ts))) return '';
+    const s = Math.floor((Date.now() - Number(ts)) / 1000);
+    if (s < 45) return 'Just now';
+    if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+    if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+    if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+    return '';
+  }
+
+  function plateInitials(plate) {
+    const t = String(plate || '')
+      .replace(/\s+/g, '')
+      .toUpperCase();
+    if (!t) return '?';
+    return t.slice(0, 2);
+  }
+
+  function normalizeFlagList(raw) {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw.filter(Boolean);
+    if (typeof raw === 'string') {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      } catch {
+        return [];
       }
+    }
+    return [];
+  }
+
+  function vehicleFlagTone(flag) {
+    if (['stolen', 'fled_scene', 'evidence_hold'].includes(flag)) return 'danger';
+    if (['wanted', 'impounded'].includes(flag)) return 'warning';
+    if (['bolo'].includes(flag)) return 'info';
+    return 'neutral';
+  }
+
+  function scheduleSearch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (!searchQuery.trim()) {
+      if (!useMock) dataStore.clearVehicleSearch();
+      errorMessage = '';
+      return;
+    }
+    if (useMock) return;
+    debounceTimer = setTimeout(async () => {
+      loading = true;
+      errorMessage = '';
+      const response = await dataStore.searchVehicles(searchQuery.trim());
+      if (!response?.ok) {
+        errorMessage = response?.error || 'Unable to search vehicles.';
+      }
+      loading = false;
     }, 300);
   }
 
-  function openDetail(row) {
-    if (useMock) {
-      dataStore.selectedVehicle = MOCK_VEHICLE;
-      dataStore.vehicleImpounds = MOCK_IMPOUNDS;
-    } else {
-      dataStore.getVehicle(row.id);
-    }
+  function clearLookupSearch() {
+    searchQuery = '';
+    errorMessage = '';
+    if (!useMock) dataStore.clearVehicleSearch();
+  }
+
+  async function openDetail(row) {
+    loading = true;
+    errorMessage = '';
     impoundFormOpen = false;
     resetImpoundForm();
+    if (useMock) {
+      const base = MOCK_RESULTS.find((r) => r.id === row.id) || row;
+      dataStore.selectedVehicle = {
+        ...MOCK_VEHICLE,
+        id: base.id,
+        vehicle_id: base.vehicle_id || MOCK_VEHICLE.vehicle_id,
+        plate: base.plate,
+        model: base.model,
+        color: base.color,
+        owner_name: base.owner_name,
+        registration_status: base.registration_status,
+        flags: base.flags || [],
+        vin: base.vin || MOCK_VEHICLE.vin,
+        owner_citizen_id: base.owner_citizen_id || MOCK_VEHICLE.owner_citizen_id,
+      };
+      dataStore.vehicleImpounds = [...MOCK_IMPOUNDS];
+      dataStore.rememberRecentVehicle(dataStore.selectedVehicle);
+      loading = false;
+      return;
+    }
+    const response = await dataStore.getVehicle(row.id);
+    if (!response?.ok) {
+      errorMessage = response?.error || 'Unable to load vehicle.';
+    }
+    loading = false;
+  }
+
+  async function openRecent(entry) {
+    await openDetail({ id: entry.id, plate: entry.plate, model: entry.model });
   }
 
   function goBack() {
@@ -106,7 +208,7 @@
     impoundHoldHours = 24;
   }
 
-  function navigateToCitizen(citizenId) {
+  function navigateToCitizen() {
     mdtStore.activePage = 'citizens';
   }
 
@@ -123,17 +225,20 @@
     if (useMock) {
       const now = new Date();
       const holdUntil = new Date(now.getTime() + impoundHoldHours * 3600000);
-      dataStore.vehicleImpounds = [{
-        id: Date.now(),
-        status: 'impounded',
-        reason: impoundReason,
-        lot_location: impoundLot,
-        fee: impoundFee,
-        hold_until: holdUntil.toISOString().slice(0, 16).replace('T', ' '),
-        impound_date: now.toISOString().slice(0, 16).replace('T', ' '),
-        release_date: null,
-        officer_name: `${mdtStore.officer.rank} ${mdtStore.officer.lastName}`,
-      }, ...dataStore.vehicleImpounds];
+      dataStore.vehicleImpounds = [
+        {
+          id: Date.now(),
+          status: 'impounded',
+          reason: impoundReason,
+          lot_location: impoundLot,
+          fee: impoundFee,
+          hold_until: holdUntil.toISOString().slice(0, 16).replace('T', ' '),
+          impound_date: now.toISOString().slice(0, 16).replace('T', ' '),
+          release_date: null,
+          officer_name: `${mdtStore.officer.rank} ${mdtStore.officer.lastName}`,
+        },
+        ...dataStore.vehicleImpounds,
+      ];
     } else {
       dataStore.getVehicle(vehicle.id);
     }
@@ -147,8 +252,8 @@
     submitting = true;
     await dataStore.releaseImpound(impoundId);
     if (useMock) {
-      dataStore.vehicleImpounds = dataStore.vehicleImpounds.map(i =>
-        i.id === impoundId ? { ...i, status: 'released', release_date: new Date().toISOString().slice(0, 16).replace('T', ' ') } : i
+      dataStore.vehicleImpounds = dataStore.vehicleImpounds.map((i) =>
+        i.id === impoundId ? { ...i, status: 'released', release_date: new Date().toISOString().slice(0, 16).replace('T', ' ') } : i,
       );
     } else {
       dataStore.getVehicle(vehicle.id);
@@ -161,7 +266,7 @@
   }
 
   function getFlagDef(key) {
-    return FLAG_DEFS.find(f => f.key === key) || { key, label: key, color: '#6b7280' };
+    return FLAG_DEFS.find((f) => f.key === key) || { key, label: key, color: '#6b7280' };
   }
 
   function formatDate(dateStr) {
@@ -173,74 +278,187 @@
     if (val == null) return '\u2014';
     return `$${Number(val).toLocaleString()}`;
   }
+
+  onMount(() => {
+    if (!useMock) {
+      dataStore.clearVehicleSearch();
+    }
+  });
 </script>
 
-<div class="vehicles-page">
+<div class="cp-page">
   {#if !isDetail}
-    <div class="search-mode">
-      <div class="page-header">
-        <h2 class="page-title">DMV & Vehicle Registry</h2>
-        <p class="page-subtitle">Search by plate, VIN, or model</p>
-      </div>
-
-      <div class="search-bar">
-        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
-        </svg>
-        <input
-          type="text"
-          class="search-input"
-          placeholder="Search plate, VIN, or model..."
-          value={searchQuery}
-          oninput={handleSearchInput}
-        />
-        {#if searchQuery}
-          <button class="search-clear" aria-label="Clear search" onclick={() => { searchQuery = ''; dataStore.vehicleSearchResults = []; }}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M18 6L6 18M6 6l12 12" />
-            </svg>
-          </button>
-        {/if}
-      </div>
-
-      {#if results.length > 0}
-        <div class="results-table">
-          <div class="table-header">
-            <span class="th">Plate</span>
-            <span class="th">Model</span>
-            <span class="th">Color</span>
-            <span class="th">Owner</span>
-            <span class="th">Registration</span>
-            <span class="th">Flags</span>
+    <section class="cp-lookup" aria-label="Vehicle registry search">
+      <div class="cp-lookup-toolbar">
+        <div class="cp-lookup-heading">
+          <div class="cp-eyebrow">
+            <Car size={13} strokeWidth={2} />
+            <span>Registry</span>
           </div>
-          {#each results as row, i (row.id || row.vehicle_id || i)}
-            <button class="table-row" onclick={() => openDetail(row)}>
-              <span class="td-plate font-mono">{row.plate.toUpperCase()}</span>
-              <span class="td-model">{row.model || '\u2014'}</span>
-              <span class="td-color">{row.color || '\u2014'}</span>
-              <span class="td-owner">{row.owner_name || '\u2014'}</span>
-              <span class="td-reg">
-                <span class="reg-badge" style="--reg-color: {getRegColor(row.registration_status)}">{row.registration_status || '\u2014'}</span>
-              </span>
-              <span class="td-flags">
-                {#each (row.flags || []) as flag (flag)}
-                  {@const def = getFlagDef(flag)}
-                  <span class="flag-badge" style="--flag-color: {def.color}">{def.label}</span>
-                {/each}
-              </span>
-            </button>
-          {/each}
+          <h2 class="cp-lookup-h1">Vehicles</h2>
+          <p class="cp-lookup-desc">Search by plate, model, owner name, or VIN.</p>
         </div>
-      {:else if searchQuery.trim()}
-        <div class="empty-state">
-          <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /><path d="M8 11h6" />
-          </svg>
-          <p class="empty-text">No vehicles found</p>
-          <p class="empty-sub">Try a different plate, VIN, or model</p>
+        <div class="cp-lookup-searchcol">
+          <label class="cp-lookup-field">
+            <span class="cp-lookup-field-ico" aria-hidden="true"><Search size={15} strokeWidth={2} /></span>
+            <input
+              bind:value={searchQuery}
+              type="text"
+              placeholder="Start typing…"
+              autocomplete="off"
+              oninput={scheduleSearch}
+            />
+            {#if searchQuery.trim()}
+              <button type="button" class="cp-lookup-clear" onclick={clearLookupSearch} aria-label="Clear search">
+                <X size={14} strokeWidth={2} />
+              </button>
+            {/if}
+          </label>
+          <div class="cp-lookup-hints">
+            <span class="cp-lookup-hint"><Hash size={11} strokeWidth={2} /> VIN</span>
+            <span class="cp-lookup-hint"><Tag size={11} strokeWidth={2} /> Plate</span>
+            <span class="cp-lookup-hint"><Car size={11} strokeWidth={2} /> Model</span>
+            <span class="cp-lookup-hint"><User size={11} strokeWidth={2} /> Owner</span>
+          </div>
         </div>
+      </div>
+
+      {#if errorMessage}
+        <div class="cp-error cp-error-tight">{errorMessage}</div>
       {/if}
-    </div>
+
+      <div class="cp-lookup-split">
+        <aside class="cp-lookup-aside" aria-label="Recently opened records">
+          <div class="cp-aside-cap">
+            <Clock size={12} strokeWidth={2} />
+            <span>Recent</span>
+            {#if recentlyViewed.length}
+              <span class="cp-aside-count">{recentlyViewed.length}</span>
+            {/if}
+          </div>
+          {#if recentlyViewed.length > 0}
+            <ul class="cp-aside-list">
+              {#each recentlyViewed as entry (entry.id ?? entry.vehicle_id ?? entry.plate)}
+                {@const rfRecent = normalizeFlagList(entry.flags)}
+                <li>
+                  <button type="button" class="cp-aside-row" onclick={() => openRecent(entry)}>
+                    <div class="cp-aside-av mono" aria-hidden="true">
+                      {plateInitials(entry.plate)}
+                    </div>
+                    <div class="cp-aside-mid">
+                      <span class="cp-aside-name mono">{entry.plate}</span>
+                      <span class="cp-aside-sub">{entry.model || '—'}</span>
+                      <span class="cp-aside-meta">
+                        {#if entry.viewedAt}{formatViewedAgo(entry.viewedAt)}{/if}
+                        {#if entry.viewedAt && entry.owner_name}<span class="cp-aside-dot"></span>{/if}
+                        {#if entry.owner_name}{entry.owner_name}{/if}
+                      </span>
+                      {#if rfRecent.length}
+                        <div class="cp-flag-strip">
+                          {#each rfRecent.slice(0, 2) as flag (flag)}
+                            <span
+                              class="cp-flag-tag"
+                              class:danger={vehicleFlagTone(flag) === 'danger'}
+                              class:warning={vehicleFlagTone(flag) === 'warning'}
+                              class:info={vehicleFlagTone(flag) === 'info'}
+                            >
+                              {FLAG_DEFS.find((d) => d.key === flag)?.label || flag}
+                            </span>
+                          {/each}
+                          {#if rfRecent.length > 2}
+                            <span class="cp-flag-more">+{rfRecent.length - 2}</span>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                    <span class="cp-aside-chev" aria-hidden="true"><ChevronRight size={14} strokeWidth={2} /></span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="cp-aside-empty">Open a record to pin it here for the session.</p>
+          {/if}
+        </aside>
+
+        <div class="cp-lookup-panel">
+          {#if loading}
+            <div class="cp-lookup-panel-inner cp-lookup-state">
+              <span class="cp-lookup-spin"><RefreshCw size={18} strokeWidth={2} /></span>
+              <span>Searching…</span>
+            </div>
+          {:else if results.length > 0}
+            <div class="cp-lookup-panel-head">
+              <span class="cp-lookup-panel-title">{results.length} result{results.length === 1 ? '' : 's'}</span>
+              {#if searchQuery.trim()}
+                <span class="cp-lookup-panel-q mono">{searchQuery.trim()}</span>
+              {/if}
+            </div>
+            <div class="cp-lookup-sheet" role="region" aria-label="Search results">
+              <div class="cp-lookup-tr cp-lookup-tr-head vp-tr-vehicle" aria-hidden="true">
+                <span class="cp-lookup-td cp-td-subject">Vehicle</span>
+                <span class="cp-lookup-td cp-td-owner">Owner</span>
+                <span class="cp-lookup-td cp-td-reg">Registration</span>
+                <span class="cp-lookup-td cp-td-flags">Flags</span>
+                <span class="cp-lookup-td cp-td-go"></span>
+              </div>
+              {#each results as row (row.id || row.vehicle_id)}
+                {@const rf = normalizeFlagList(row.flags)}
+                <button type="button" class="cp-lookup-tr cp-lookup-tr-data vp-tr-vehicle" onclick={() => openDetail(row)}>
+                  <span class="cp-lookup-td cp-td-subject">
+                    <span class="cp-lookup-av mono" aria-hidden="true">{plateInitials(row.plate)}</span>
+                    <span class="cp-lookup-subject-text">
+                      <span class="cp-lookup-legal mono">{row.plate}</span>
+                      <span class="cp-lookup-subline">
+                        <Car size={10} strokeWidth={2} />
+                        {row.model || '—'}
+                        {#if row.color}<span class="cp-aside-dot"></span>{row.color}{/if}
+                      </span>
+                    </span>
+                  </span>
+                  <span class="cp-lookup-td cp-td-owner">{row.owner_name || '—'}</span>
+                  <span class="cp-lookup-td cp-td-reg">
+                    <span class="reg-badge-sm" style="--reg-color: {getRegColor(row.registration_status)}">{row.registration_status || '—'}</span>
+                  </span>
+                  <span class="cp-lookup-td cp-td-flags">
+                    {#if rf.length}
+                      <span class="cp-flag-strip">
+                        {#each rf.slice(0, 3) as flag (flag)}
+                          <span
+                            class="cp-flag-tag"
+                            class:danger={vehicleFlagTone(flag) === 'danger'}
+                            class:warning={vehicleFlagTone(flag) === 'warning'}
+                            class:info={vehicleFlagTone(flag) === 'info'}
+                          >
+                            {FLAG_DEFS.find((d) => d.key === flag)?.label || flag}
+                          </span>
+                        {/each}
+                        {#if rf.length > 3}
+                          <span class="cp-flag-more">+{rf.length - 3}</span>
+                        {/if}
+                      </span>
+                    {:else}
+                      <span class="cp-flag-clear">Clear</span>
+                    {/if}
+                  </span>
+                  <span class="cp-lookup-td cp-td-go" aria-hidden="true"><ChevronRight size={15} strokeWidth={2} /></span>
+                </button>
+              {/each}
+            </div>
+          {:else if searchQuery.trim()}
+            <div class="cp-lookup-panel-inner cp-lookup-state cp-lookup-state-muted">
+              <Search size={20} strokeWidth={2} />
+              <span>No records match <span class="mono">{searchQuery.trim()}</span>.</span>
+            </div>
+          {:else}
+            <div class="cp-lookup-panel-inner cp-lookup-state cp-lookup-state-muted">
+              <Car size={20} strokeWidth={2} />
+              <span>Results appear here.</span>
+            </div>
+          {/if}
+        </div>
+      </div>
+    </section>
   {:else}
     <div class="detail-mode">
       <button class="back-btn" onclick={goBack}>
@@ -285,7 +503,7 @@
             <div class="owner-details">
               <span class="owner-name">{vehicle.owner_name || '\u2014'}</span>
               {#if vehicle.owner_citizen_id}
-                <button class="cid-link font-mono" onclick={() => navigateToCitizen(vehicle.owner_citizen_id)}>{vehicle.owner_citizen_id}</button>
+                <button class="cid-link font-mono" onclick={navigateToCitizen}>{vehicle.owner_citizen_id}</button>
               {/if}
             </div>
           </div>
@@ -359,7 +577,7 @@
           </div>
         {:else}
           {#if !impoundFormOpen}
-            <button class="btn-impound" onclick={() => impoundFormOpen = true}>
+            <button class="btn-impound" onclick={() => (impoundFormOpen = true)}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M9 3v18M15 3v18M3 9h18M3 15h18" />
               </svg>
@@ -397,7 +615,12 @@
               </div>
               <div class="form-actions">
                 <button class="btn-confirm" onclick={confirmImpound} disabled={submitting || !impoundReason.trim()}>Confirm Impound</button>
-                <button class="btn-cancel" onclick={() => { impoundFormOpen = false; resetImpoundForm(); }}>Cancel</button>
+                <button
+                  class="btn-cancel"
+                  onclick={() => {
+                    impoundFormOpen = false;
+                    resetImpoundForm();
+                  }}>Cancel</button>
               </div>
             </div>
           {/if}
@@ -434,192 +657,496 @@
 </div>
 
 <style>
-  .vehicles-page {
-    padding: calc(24px * var(--mdt-scale));
+  .cp-page {
     display: flex;
     flex-direction: column;
-    gap: calc(20px * var(--mdt-scale));
-    animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    height: 100%;
-  }
-
-  .search-mode {
-    display: flex;
-    flex-direction: column;
-    gap: calc(16px * var(--mdt-scale));
-    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-
-  .detail-mode {
-    display: flex;
-    flex-direction: column;
-    gap: calc(14px * var(--mdt-scale));
-    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-
-  .page-header {
-    display: flex;
-    flex-direction: column;
-    gap: calc(4px * var(--mdt-scale));
-  }
-
-  .page-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: calc(22px * var(--mdt-scale));
-    font-weight: 700;
+    gap: calc(10px * var(--mdt-scale));
+    padding: calc(14px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
     color: var(--mdt-text);
-    letter-spacing: -0.01em;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    container-type: inline-size;
+    container-name: cp-page;
   }
 
-  .page-subtitle {
-    font-size: calc(12px * var(--mdt-scale));
+  .cp-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    margin-bottom: calc(6px * var(--mdt-scale));
     color: var(--mdt-text-muted);
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
   }
 
-  .search-bar {
-    position: relative;
+  .cp-lookup {
+    display: flex;
+    flex-direction: column;
+    gap: calc(8px * var(--mdt-scale));
+    flex: 1;
+    min-height: 0;
+  }
+
+  .cp-lookup-toolbar {
+    display: grid;
+    grid-template-columns: 1fr minmax(min(100%, calc(280px * var(--mdt-scale))), 1fr);
+    gap: calc(12px * var(--mdt-scale));
+    align-items: end;
+    padding-bottom: calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .cp-lookup-heading .cp-eyebrow {
+    margin-bottom: calc(4px * var(--mdt-scale));
+  }
+
+  .cp-lookup-h1 {
+    margin: 0;
+    font-family: 'Unbounded', 'Outfit', system-ui, sans-serif;
+    font-size: calc(18px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    color: var(--mdt-text);
+  }
+
+  .cp-lookup-desc {
+    margin: calc(4px * var(--mdt-scale)) 0 0;
+    font-size: calc(11px * var(--mdt-scale));
+    line-height: 1.4;
+    color: var(--mdt-text-muted);
+    max-width: 52ch;
+  }
+
+  .cp-lookup-searchcol {
+    display: flex;
+    flex-direction: column;
+    gap: calc(6px * var(--mdt-scale));
+    min-width: 0;
+  }
+
+  .cp-lookup-field {
     display: flex;
     align-items: center;
-  }
-
-  .search-icon {
-    position: absolute;
-    left: calc(12px * var(--mdt-scale));
-    width: calc(16px * var(--mdt-scale));
-    height: calc(16px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-    pointer-events: none;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale)) calc(10px * var(--mdt-scale)) calc(36px * var(--mdt-scale));
-    border-radius: var(--mdt-radius);
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    background: var(--mdt-surface-2);
     border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface);
-    color: var(--mdt-text);
-    font-family: 'Outfit', sans-serif;
-    font-size: calc(13px * var(--mdt-scale));
-    outline: none;
-    transition: border-color 0.15s ease;
-  }
-
-  .search-input::placeholder {
+    border-radius: var(--mdt-radius);
     color: var(--mdt-text-muted);
   }
 
-  .search-input:focus {
-    border-color: var(--mdt-accent);
+  .cp-lookup-field:focus-within {
+    border-color: color-mix(in srgb, var(--mdt-accent) 45%, var(--mdt-border));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--mdt-accent) 18%, transparent);
   }
 
-  .search-clear {
-    position: absolute;
-    right: calc(8px * var(--mdt-scale));
-    width: calc(24px * var(--mdt-scale));
-    height: calc(24px * var(--mdt-scale));
+  .cp-lookup-field-ico {
+    display: flex;
+    flex-shrink: 0;
+    opacity: 0.85;
+  }
+
+  .cp-lookup-field input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--mdt-text);
+    font: inherit;
+    font-size: calc(12px * var(--mdt-scale));
+  }
+
+  .cp-lookup-clear {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: none;
-    border: none;
+    flex-shrink: 0;
+    width: calc(28px * var(--mdt-scale));
+    height: calc(28px * var(--mdt-scale));
+    padding: 0;
+    border: 0;
+    border-radius: var(--mdt-radius-sm);
+    background: color-mix(in srgb, var(--mdt-surface-3) 80%, transparent);
     color: var(--mdt-text-muted);
     cursor: pointer;
-    border-radius: var(--mdt-radius-sm);
-    transition: color 0.15s ease;
-    padding: 0;
   }
 
-  .search-clear svg {
-    width: calc(14px * var(--mdt-scale));
-    height: calc(14px * var(--mdt-scale));
-  }
-
-  .search-clear:hover {
+  .cp-lookup-clear:hover {
     color: var(--mdt-text);
+    background: var(--mdt-surface-3);
   }
 
-  .results-table {
+  .cp-lookup-hints {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(10px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    letter-spacing: 0.02em;
+  }
+
+  .cp-lookup-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(4px * var(--mdt-scale));
+    opacity: 0.92;
+  }
+
+  .cp-lookup-hint :global(svg) {
+    flex-shrink: 0;
+    opacity: 0.75;
+  }
+
+  .cp-lookup-split {
+    display: grid;
+    grid-template-columns: minmax(calc(200px * var(--mdt-scale)), calc(260px * var(--mdt-scale))) minmax(0, 1fr);
+    gap: calc(10px * var(--mdt-scale));
+    flex: 1;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .cp-lookup-aside {
     display: flex;
     flex-direction: column;
+    min-width: 0;
+    min-height: 0;
     border: 1px solid var(--mdt-border);
     border-radius: var(--mdt-radius);
-    overflow: hidden;
-  }
-
-  .table-header {
-    display: grid;
-    grid-template-columns: 1.1fr 1.2fr 0.9fr 1.3fr 1fr 1.4fr;
-    gap: calc(8px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border-bottom: 1px solid var(--mdt-border);
-  }
-
-  .th {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-
-  .table-row {
-    display: grid;
-    grid-template-columns: 1.1fr 1.2fr 0.9fr 1.3fr 1fr 1.4fr;
-    gap: calc(8px * var(--mdt-scale));
-    padding: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
     background: var(--mdt-surface);
-    border: none;
-    border-bottom: 1px solid var(--mdt-border);
-    font-family: 'Outfit', sans-serif;
-    font-size: calc(12px * var(--mdt-scale));
-    color: var(--mdt-text);
-    cursor: pointer;
-    transition: background 0.12s ease;
-    text-align: left;
-    width: 100%;
+    overflow: hidden;
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--mdt-accent) 40%, transparent);
+  }
+
+  .cp-aside-cap {
+    display: flex;
     align-items: center;
+    gap: calc(6px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-3);
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--mdt-text-muted);
   }
 
-  .table-row:last-child {
-    border-bottom: none;
+  .cp-aside-cap :global(svg) {
+    flex-shrink: 0;
+    opacity: 0.85;
   }
 
-  .table-row:hover {
+  .cp-aside-count {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-family: 'Share Tech Mono', ui-monospace, monospace;
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-dim);
+  }
+
+  .cp-aside-list {
+    list-style: none;
+    margin: 0;
+    padding: calc(4px * var(--mdt-scale));
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+  }
+
+  .cp-aside-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: calc(8px * var(--mdt-scale));
+    align-items: center;
+    width: 100%;
+    padding: calc(7px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    margin: 0 0 calc(2px * var(--mdt-scale));
+    border: 1px solid transparent;
+    border-radius: var(--mdt-radius-sm);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition:
+      background 0.12s ease,
+      border-color 0.12s ease;
+  }
+
+  .cp-aside-row:hover {
     background: var(--mdt-surface-2);
+    border-color: var(--mdt-border);
   }
 
-  .table-row:active {
-    transform: scale(0.998);
+  .cp-aside-av {
+    width: calc(32px * var(--mdt-scale));
+    height: calc(32px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px solid var(--mdt-border-2);
+    background: var(--mdt-surface-3);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--mdt-accent);
+    flex-shrink: 0;
   }
 
-  .td-plate {
+  .cp-aside-mid {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(2px * var(--mdt-scale));
+  }
+
+  .cp-aside-name {
+    font-size: calc(12px * var(--mdt-scale));
     font-weight: 600;
     color: var(--mdt-text);
-    letter-spacing: 0.04em;
+    line-height: 1.2;
   }
 
-  .td-model {
+  .cp-aside-sub {
+    font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-dim);
+    font-weight: 500;
   }
 
-  .td-color {
-    color: var(--mdt-text-dim);
+  .cp-aside-meta {
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(4px * var(--mdt-scale));
   }
 
-  .td-owner {
+  .cp-aside-dot {
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: var(--mdt-text-muted);
+    opacity: 0.65;
+    flex-shrink: 0;
+  }
+
+  .cp-aside-chev {
+    display: flex;
+    color: var(--mdt-text-muted);
+    flex-shrink: 0;
+    opacity: 0.55;
+  }
+
+  .cp-aside-row:hover .cp-aside-chev {
+    opacity: 0.95;
+    color: var(--mdt-accent);
+  }
+
+  .cp-aside-empty {
+    margin: 0;
+    padding: calc(12px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+    line-height: 1.45;
+    color: var(--mdt-text-muted);
+  }
+
+  .cp-lookup-panel {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border: 1px solid var(--mdt-border);
+    border-radius: var(--mdt-radius);
+    background: var(--mdt-surface);
+    overflow: hidden;
+    flex: 1;
+  }
+
+  .cp-lookup-panel-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    background: var(--mdt-surface-3);
+    flex-shrink: 0;
+  }
+
+  .cp-lookup-panel-title {
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+  }
+
+  .cp-lookup-panel-q {
+    font-size: calc(10px * var(--mdt-scale));
     color: var(--mdt-text-dim);
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
-  .td-reg {
+  .cp-lookup-panel-inner {
+    flex: 1;
+    min-height: calc(120px * var(--mdt-scale));
+    min-width: 0;
+  }
+
+  .cp-lookup-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: calc(10px * var(--mdt-scale));
+    padding: calc(24px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    text-align: center;
+    font-size: calc(12px * var(--mdt-scale));
+    color: var(--mdt-text);
+  }
+
+  .cp-lookup-state-muted {
+    color: var(--mdt-text-muted);
+  }
+
+  .cp-lookup-state-muted :global(svg) {
+    opacity: 0.45;
+  }
+
+  .cp-lookup-spin {
+    display: inline-flex;
+    animation: cp-rot 0.75s linear infinite;
+  }
+
+  .cp-lookup-sheet {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cp-lookup-tr {
+    display: grid;
+    gap: calc(8px * var(--mdt-scale));
+    align-items: center;
+    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    border-bottom: 1px solid var(--mdt-border);
+    font-size: calc(11px * var(--mdt-scale));
+  }
+
+  .cp-lookup-tr.vp-tr-vehicle {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr) minmax(0, 0.78fr) minmax(0, 1fr) calc(28px * var(--mdt-scale));
+  }
+
+  .cp-lookup-tr:last-child {
+    border-bottom: 0;
+  }
+
+  .cp-lookup-tr-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-muted);
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--mdt-border);
+  }
+
+  .cp-lookup-tr-data {
+    width: 100%;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.12s ease;
+  }
+
+  .cp-lookup-tr-data:hover {
+    background: color-mix(in srgb, var(--mdt-surface-3) 55%, var(--mdt-surface));
+  }
+
+  .cp-lookup-td {
+    min-width: 0;
+  }
+
+  .cp-td-subject {
+    display: flex;
+    align-items: center;
+    gap: calc(8px * var(--mdt-scale));
+  }
+
+  .cp-lookup-av {
+    width: calc(36px * var(--mdt-scale));
+    height: calc(36px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px solid var(--mdt-border-2);
+    background: var(--mdt-surface-3);
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    font-size: calc(11px * var(--mdt-scale));
+    font-weight: 700;
+    color: var(--mdt-accent);
+  }
+
+  .cp-lookup-subject-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: calc(2px * var(--mdt-scale));
+  }
+
+  .cp-lookup-legal {
+    font-size: calc(12px * var(--mdt-scale));
+    font-weight: 600;
+    color: var(--mdt-text);
+    line-height: 1.2;
+  }
+
+  .cp-lookup-subline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: calc(5px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    color: var(--mdt-text-muted);
+  }
+
+  .cp-lookup-subline :global(svg) {
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  .cp-td-owner {
+    font-size: calc(11px * var(--mdt-scale));
+    color: var(--mdt-text-dim);
+    word-break: break-word;
+    line-height: 1.35;
+  }
+
+  .cp-td-reg {
     display: flex;
     align-items: center;
   }
 
-  .reg-badge {
+  .reg-badge-sm {
     display: inline-flex;
     align-items: center;
     padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
@@ -634,57 +1161,135 @@
     line-height: 1.4;
   }
 
-  .td-flags {
+  .cp-td-go {
+    display: flex;
+    justify-content: flex-end;
+    color: var(--mdt-text-muted);
+    opacity: 0.5;
+  }
+
+  .cp-lookup-tr-data:hover .cp-td-go {
+    opacity: 1;
+    color: var(--mdt-accent);
+  }
+
+  .cp-flag-strip {
     display: flex;
     flex-wrap: wrap;
     gap: calc(4px * var(--mdt-scale));
     align-items: center;
   }
 
-  .flag-badge {
+  .cp-flag-tag {
     display: inline-flex;
     align-items: center;
-    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
-    border-radius: calc(99px * var(--mdt-scale));
+    padding: calc(2px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px solid var(--mdt-border);
+    border-left-width: 2px;
+    border-left-color: var(--mdt-border-2);
+    background: var(--mdt-surface-2);
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--mdt-text-dim);
+    line-height: 1.25;
+    max-width: 100%;
+  }
+
+  .cp-flag-tag.danger {
+    border-left-color: #dc2626;
+    color: color-mix(in srgb, #fecaca 55%, var(--mdt-text-dim));
+  }
+
+  .cp-flag-tag.warning {
+    border-left-color: #d97706;
+    color: color-mix(in srgb, #fde68a 45%, var(--mdt-text-dim));
+  }
+
+  .cp-flag-tag.info {
+    border-left-color: #2563eb;
+    color: color-mix(in srgb, #bfdbfe 40%, var(--mdt-text-dim));
+  }
+
+  .cp-flag-more {
+    font-size: calc(9px * var(--mdt-scale));
+    font-weight: 700;
+    padding: calc(2px * var(--mdt-scale)) calc(5px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
+    border: 1px dashed var(--mdt-border);
+    color: var(--mdt-text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .cp-flag-clear {
     font-size: calc(10px * var(--mdt-scale));
     font-weight: 600;
-    background: color-mix(in srgb, var(--flag-color) 15%, transparent);
-    color: var(--flag-color);
-    border: 1px solid color-mix(in srgb, var(--flag-color) 25%, transparent);
-    white-space: nowrap;
-    line-height: 1.4;
+    color: var(--mdt-success);
+    opacity: 0.85;
   }
 
-  .flag-badge-lg {
-    padding: calc(4px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    font-size: calc(11px * var(--mdt-scale));
+  @container cp-page (max-width: 720px) {
+    .cp-lookup-toolbar {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+
+    .cp-lookup-split {
+      grid-template-columns: 1fr;
+    }
+
+    .cp-lookup-aside {
+      max-height: min(36vh, 260px);
+      order: 2;
+    }
+
+    .cp-lookup-panel {
+      order: 1;
+      min-height: min(44vh, 320px);
+    }
   }
 
-  .empty-state {
+  @container cp-page (max-width: 560px) {
+    .cp-lookup-sheet {
+      overflow-x: auto;
+    }
+
+    .cp-lookup-tr.vp-tr-vehicle {
+      min-width: calc(520px * var(--mdt-scale));
+    }
+  }
+
+  .cp-error {
+    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    border-radius: var(--mdt-radius);
+    border: 1px solid color-mix(in srgb, var(--mdt-error) 45%, transparent);
+    background: color-mix(in srgb, var(--mdt-error) 12%, var(--mdt-surface));
+    color: var(--mdt-error);
+    font-size: calc(13px * var(--mdt-scale));
+  }
+
+  .cp-error-tight {
+    margin-top: calc(2px * var(--mdt-scale));
+    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    font-size: calc(12px * var(--mdt-scale));
+  }
+
+  @keyframes cp-rot {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .mono {
+    font-family: 'Share Tech Mono', 'Courier New', monospace;
+  }
+
+  .detail-mode {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: calc(48px * var(--mdt-scale)) 0;
-    gap: calc(8px * var(--mdt-scale));
-    opacity: 0.5;
-  }
-
-  .empty-icon {
-    width: calc(40px * var(--mdt-scale));
-    height: calc(40px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-  }
-
-  .empty-text {
-    font-size: calc(14px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text-dim);
-  }
-
-  .empty-sub {
-    font-size: calc(11px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
+    gap: calc(14px * var(--mdt-scale));
+    animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
   .back-btn {
@@ -700,7 +1305,10 @@
     font-size: calc(12px * var(--mdt-scale));
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease, transform 0.1s ease;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      transform 0.1s ease;
     align-self: flex-start;
   }
 
@@ -715,7 +1323,7 @@
   }
 
   .back-btn:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .vehicle-header {
@@ -976,7 +1584,9 @@
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.1s ease;
   }
 
   .btn-release svg {
@@ -989,7 +1599,7 @@
   }
 
   .btn-release:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-release:disabled {
@@ -1011,7 +1621,10 @@
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease, transform 0.1s ease;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      transform 0.1s ease;
   }
 
   .btn-impound svg {
@@ -1025,7 +1638,7 @@
   }
 
   .btn-impound:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .impound-form {
@@ -1140,7 +1753,9 @@
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 600;
     cursor: pointer;
-    transition: opacity 0.15s ease, transform 0.1s ease;
+    transition:
+      opacity 0.15s ease,
+      transform 0.1s ease;
   }
 
   .btn-confirm:hover {
@@ -1148,7 +1763,7 @@
   }
 
   .btn-confirm:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .btn-confirm:disabled {
@@ -1166,7 +1781,10 @@
     font-size: calc(11px * var(--mdt-scale));
     font-weight: 500;
     cursor: pointer;
-    transition: background 0.12s ease, color 0.12s ease, transform 0.1s ease;
+    transition:
+      background 0.12s ease,
+      color 0.12s ease,
+      transform 0.1s ease;
   }
 
   .btn-cancel:hover {
@@ -1175,7 +1793,7 @@
   }
 
   .btn-cancel:active {
-    transform: scale(0.97);
+    transform: scale(0.96);
   }
 
   .history-list {
@@ -1234,8 +1852,33 @@
     font-family: 'Share Tech Mono', monospace;
   }
 
+  .flag-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border-radius: calc(99px * var(--mdt-scale));
+    font-size: calc(10px * var(--mdt-scale));
+    font-weight: 600;
+    background: color-mix(in srgb, var(--flag-color) 15%, transparent);
+    color: var(--flag-color);
+    border: 1px solid color-mix(in srgb, var(--flag-color) 25%, transparent);
+    white-space: nowrap;
+    line-height: 1.4;
+  }
+
+  .flag-badge-lg {
+    padding: calc(4px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale));
+  }
+
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(6px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
 </style>

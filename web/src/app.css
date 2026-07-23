@@ -17,15 +17,20 @@
   --mdt-radius-sm: calc(4px * var(--mdt-scale));
   --mdt-radius-lg: calc(10px * var(--mdt-scale));
   --mdt-bezel-width: calc(3px * var(--mdt-scale));
-  --mdt-sidebar-width: calc(56px * var(--mdt-scale));
-  --mdt-sidebar-expanded: calc(190px * var(--mdt-scale));
+  /* ~10% tighter chrome + nav rhythm (see Sidebar / CivilianSidebar) */
+  --mdt-sidebar-scale: 0.9;
+  --mdt-sidebar-width: calc(56px * var(--mdt-scale) * var(--mdt-sidebar-scale));
+  --mdt-sidebar-expanded: calc(190px * var(--mdt-scale) * var(--mdt-sidebar-scale));
   --mdt-toolbar-height: calc(52px * var(--mdt-scale));
 
   /* ── Core Palette (Dark — invariant across themes) ── */
-  --mdt-bg: #0b0d11;
-  --mdt-surface: rgba(14, 17, 23, 0.92);
-  --mdt-surface-2: rgba(20, 24, 32, 0.88);
-  --mdt-surface-3: rgba(28, 33, 44, 0.80);
+  /* Main column + toolbar + tab bar — one plane, lighter than --mdt-sidebar */
+  --mdt-chrome: #1f232c;
+  --mdt-bg: var(--mdt-chrome);
+  /* Opaque surfaces — NUI sits over game; rgba panels read as "broken transparency" */
+  --mdt-surface: #23262f;
+  --mdt-surface-2: #2b303a;
+  --mdt-surface-3: #343946;
   --mdt-border: rgba(255, 255, 255, 0.08);
   --mdt-border-2: rgba(255, 255, 255, 0.14);
   --mdt-text: #e4e8ef;
@@ -40,18 +45,18 @@
   /* ── Bezel (aluminum frame) ── */
   --mdt-bezel: linear-gradient(
     135deg,
-    rgba(180, 185, 195, 0.35) 0%,
-    rgba(140, 145, 155, 0.22) 25%,
-    rgba(100, 105, 115, 0.18) 50%,
-    rgba(140, 145, 155, 0.22) 75%,
-    rgba(180, 185, 195, 0.35) 100%
+    rgba(180, 185, 195, 1) 0%,
+    rgba(140, 145, 155, 0.8) 25%,
+    rgba(100, 105, 115, 0.6) 50%,
+    rgba(140, 145, 155, 0.8) 75%,
+    rgba(180, 185, 195, 1) 100%
   );
-  --mdt-bezel-edge: rgba(255, 255, 255, 0.15);
+  --mdt-bezel-edge: rgba(255, 255, 255, 0.6);
   --mdt-bezel-shadow: 0 0 30px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
 
   /* ── Panel Surfaces ── */
-  --mdt-sidebar: rgba(10, 12, 18, 0.95);
-  --mdt-toolbar: rgba(12, 15, 20, 0.92);
+  --mdt-sidebar: #181b22;
+  --mdt-toolbar: var(--mdt-chrome);
 
   /* ── Default Theme: Steel Blue ── */
   --mdt-accent: #60a5fa;
@@ -101,24 +106,7 @@
   --mdt-accent-glow: rgba(232, 213, 181, 0.20);
 }
 
-/* ── Civilian Mode: Gold / Civic ── */
-[data-mode="civilian"] {
-  --civ-gold: #c9a84c;
-  --civ-gold-dim: rgba(201, 168, 76, 0.12);
-  --civ-gold-glow: rgba(201, 168, 76, 0.35);
-  --civ-gold-bright: #e4c867;
-  --civ-cream: #f0e6d0;
-  --civ-slate: #8b9bb4;
-  --civ-border: rgba(201, 168, 76, 0.15);
-  --civ-text-muted: #6b7a90;
-  --civ-accent: var(--civ-gold);
-  --civ-accent-dim: var(--civ-gold-dim);
-  --civ-accent-glow: var(--civ-gold-glow);
-
-  --mdt-accent: #c9a84c;
-  --mdt-accent-dim: rgba(201, 168, 76, 0.15);
-  --mdt-accent-glow: rgba(201, 168, 76, 0.25);
-}
+/* ── Civilian Mode: uses same accent theme as Police MDT ── */
 
 /* ═══════════════════════════════════════════════════════════
    Base Resets
@@ -143,6 +131,12 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Improve text wrapping and numeric alignment across the app */
+h1, h2, h3, h4, h5, h6,
+.page-title, .section-title, .panel-title, .form-title {
+  text-wrap: balance;
+}
+
 /* NUI: no background, the game renders behind */
 body {
   background: transparent !important;
@@ -164,6 +158,24 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.22);
+}
+
+/* Collapsed sidebar: fixed-position label (see sidebarTooltip action) */
+.mdt-sidebar-tooltip {
+  position: fixed;
+  z-index: 100000;
+  transform: translateY(-50%);
+  padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+  border-radius: var(--mdt-radius-sm);
+  background: var(--mdt-surface-2);
+  border: 1px solid var(--mdt-border-2);
+  color: var(--mdt-text);
+  font-size: calc(12px * var(--mdt-scale));
+  font-weight: 500;
+  font-family: inherit;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -193,5 +205,10 @@ body {
 
   .font-mono {
     font-family: 'Share Tech Mono', 'Courier New', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
   }
 }

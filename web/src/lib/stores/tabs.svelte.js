@@ -7,12 +7,22 @@ import {
   AlertTriangle,
   Radio,
   Shield,
+  ShieldUser,
   Camera,
+  Crosshair,
+  Cctv,
+  Video,
   Settings,
-} from 'lucide-svelte';
+  Map,
+  Trophy,
+  Scale,
+  GraduationCap,
+  BookOpen,
+} from '@lucide/svelte';
 
 const PAGE_META = {
   dashboard:  { label: 'Dashboard',  icon: LayoutGrid,    pinnable: true },
+  dispatch:   { label: 'Dispatch',   icon: Map,           pinnable: false },
   citizens:   { label: 'Citizens',   icon: Users,         pinnable: false },
   vehicles:   { label: 'Vehicles',   icon: Car,           pinnable: false },
   reports:    { label: 'Reports',    icon: FileText,      pinnable: false },
@@ -20,7 +30,15 @@ const PAGE_META = {
   warrants:   { label: 'Warrants',   icon: AlertTriangle, pinnable: false },
   bolos:      { label: 'BOLOs',      icon: Radio,         pinnable: false },
   units:      { label: 'Units',      icon: Shield,        pinnable: false },
+  roster:     { label: 'Roster',     icon: ShieldUser,    pinnable: false },
+  cctv:       { label: 'CCTV',       icon: Cctv,          pinnable: false },
+  bodycams:   { label: 'Bodycams',   icon: Video,         pinnable: false },
   evidence:   { label: 'Evidence',   icon: Camera,        pinnable: false },
+  weapons:    { label: 'Weapons',    icon: Crosshair,     pinnable: false },
+  leaderboard:{ label: 'Leaderboard',icon: Trophy,        pinnable: false },
+  charges:    { label: 'Charges',    icon: Scale,         pinnable: false },
+  fto:        { label: 'FTO',        icon: GraduationCap, pinnable: false },
+  sops:       { label: 'SOPs',       icon: BookOpen,      pinnable: false },
   settings:   { label: 'Settings',   icon: Settings,      pinnable: false },
 };
 

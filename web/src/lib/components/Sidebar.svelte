@@ -8,25 +8,76 @@
     AlertTriangle,
     Radio,
     Shield,
+    ShieldUser,
     Camera,
+    Crosshair,
+    Cctv,
+    Video,
     Settings,
     ChevronLeft,
     ChevronRight,
-    LogOut
-  } from 'lucide-svelte';
+    ChevronDown,
+    LogOut,
+    Map,
+    Trophy,
+    Scale,
+    GraduationCap,
+    BookOpen,
+  } from '@lucide/svelte';
   import { mdtStore } from '../stores/mdt.svelte.js';
   import { tabsStore } from '../stores/tabs.svelte.js';
+  import { playMdtSound } from '../utils/mdtSounds.js';
+  import { sidebarTooltip } from '../actions/sidebarTooltip.js';
 
-  const NAV_ITEMS = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
-    { id: 'citizens',  label: 'Citizens',  icon: Users },
-    { id: 'vehicles',  label: 'Vehicles',  icon: Car },
-    { id: 'reports',   label: 'Reports',   icon: FileText },
-    { id: 'cases',     label: 'Cases',     icon: FolderOpen },
-    { id: 'warrants',  label: 'Warrants',  icon: AlertTriangle },
-    { id: 'bolos',     label: 'BOLOs',     icon: Radio },
-    { id: 'units',     label: 'Units',     icon: Shield },
-    { id: 'evidence',  label: 'Evidence',  icon: Camera },
+  const NAV_CATEGORIES = [
+    {
+      id: 'operations',
+      label: 'Operations',
+      items: [
+        { id: 'dashboard', label: 'Dashboard', icon: LayoutGrid },
+        { id: 'dispatch',  label: 'Dispatch',  icon: Map },
+        { id: 'units',     label: 'Units',     icon: Shield },
+      ],
+    },
+    {
+      id: 'records',
+      label: 'Records',
+      items: [
+        { id: 'citizens',  label: 'Citizens',  icon: Users },
+        { id: 'vehicles',  label: 'Vehicles',  icon: Car },
+        { id: 'warrants',  label: 'Warrants',  icon: AlertTriangle },
+        { id: 'bolos',     label: 'BOLOs',     icon: Radio },
+      ],
+    },
+    {
+      id: 'investigations',
+      label: 'Investigations',
+      items: [
+        { id: 'reports',   label: 'Reports',   icon: FileText },
+        { id: 'cases',     label: 'Cases',     icon: FolderOpen },
+        { id: 'evidence',  label: 'Evidence',  icon: Camera },
+        { id: 'weapons',   label: 'Weapons',   icon: Crosshair },
+      ],
+    },
+    {
+      id: 'surveillance',
+      label: 'Surveillance',
+      items: [
+        { id: 'cctv',      label: 'CCTV',      icon: Cctv },
+        { id: 'bodycams',  label: 'Bodycams',  icon: Video },
+      ],
+    },
+    {
+      id: 'department',
+      label: 'Department',
+      items: [
+        { id: 'roster',    label: 'Roster',    icon: ShieldUser },
+        { id: 'leaderboard', label: 'Leaderboard', icon: Trophy },
+        { id: 'charges',   label: 'Charges',   icon: Scale },
+        { id: 'fto',       label: 'FTO',       icon: GraduationCap },
+        { id: 'sops',      label: 'SOPs',      icon: BookOpen },
+      ],
+    },
   ];
 
   const BOTTOM_ITEMS = [
@@ -34,68 +85,102 @@
   ];
 
   function handleLogout() {
+    playMdtSound('logout');
     tabsStore.reset();
     mdtStore.logout();
   }
 
   let collapsed = $derived(mdtStore.sidebarCollapsed);
   let active = $derived(tabsStore.activePage);
+  let collapsedCategories = $state({});
 
   function navigate(pageId) {
     tabsStore.openTab(pageId);
   }
+
+  function toggleCategory(catId) {
+    collapsedCategories = { ...collapsedCategories, [catId]: !collapsedCategories[catId] };
+  }
+
+  function isCategoryActive(cat) {
+    return cat.items.some(item => item.id === active);
+  }
 </script>
 
 <aside class="sidebar" class:collapsed>
-  <!-- Collapse toggle -->
-  <button class="nav-item toggle-btn" onclick={() => mdtStore.toggleSidebar()} title={collapsed ? 'Expand' : 'Collapse'}>
-    <span class="nav-icon">
-      {#if collapsed}
-        <ChevronRight size="100%" />
-      {:else}
-        <ChevronLeft size="100%" />
-      {/if}
-    </span>
-    {#if !collapsed}
-      <span class="nav-label toggle-label">Collapse</span>
-    {/if}
-  </button>
-
-  <div class="nav-divider"></div>
-
   <!-- Main nav -->
   <nav class="nav-main">
-    {#each NAV_ITEMS as item (item.id)}
-      {@const Icon = item.icon}
-      <button
-        class="nav-item"
-        class:active={active === item.id}
-        onclick={() => navigate(item.id)}
-        title={collapsed ? item.label : ''}
-      >
-        <span class="nav-icon">
-          <Icon size="100%" />
-        </span>
-        {#if !collapsed}
-          <span class="nav-label">{item.label}</span>
-        {/if}
-        {#if active === item.id}
-          <div class="active-indicator"></div>
-        {/if}
-      </button>
+    {#each NAV_CATEGORIES as category (category.id)}
+      {@const catCollapsed = collapsedCategories[category.id]}
+      {@const catActive = isCategoryActive(category)}
+
+      {#if !collapsed}
+        <button
+          class="nav-category-header"
+          class:cat-active={catActive}
+          onclick={() => toggleCategory(category.id)}
+        >
+          <span class="nav-category-label">{category.label}</span>
+          <span class="nav-category-chevron" class:rotated={!catCollapsed}>
+            <ChevronDown size="100%" />
+          </span>
+        </button>
+      {/if}
+
+      {#if !catCollapsed || collapsed}
+        <div class="nav-category-items" class:collapsed-cat={collapsed}>
+          {#each category.items as item (item.id)}
+            {@const Icon = item.icon}
+            <button
+              class="nav-item"
+              class:active={active === item.id}
+              use:sidebarTooltip={collapsed ? item.label : ''}
+              onclick={() => navigate(item.id)}
+            >
+              <span class="nav-icon">
+                <Icon size="100%" />
+              </span>
+              {#if !collapsed}
+                <span class="nav-label">{item.label}</span>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {/if}
     {/each}
   </nav>
 
   <!-- Bottom nav -->
   <div class="nav-bottom">
     <div class="nav-divider"></div>
+
+    <!-- Collapse toggle -->
+    <button
+      class="nav-item toggle-btn"
+      use:sidebarTooltip={collapsed ? 'Expand' : ''}
+      onclick={() => mdtStore.toggleSidebar()}
+    >
+      <span class="nav-icon">
+        {#if collapsed}
+          <ChevronRight size="100%" />
+        {:else}
+          <ChevronLeft size="100%" />
+        {/if}
+      </span>
+      {#if !collapsed}
+        <span class="nav-label toggle-label">Collapse</span>
+      {/if}
+    </button>
+
+    <div class="nav-divider"></div>
+
     {#each BOTTOM_ITEMS as item (item.id)}
       {@const Icon = item.icon}
       <button
         class="nav-item"
         class:active={active === item.id}
+        use:sidebarTooltip={collapsed ? item.label : ''}
         onclick={() => navigate(item.id)}
-        title={collapsed ? item.label : ''}
       >
         <span class="nav-icon">
           <Icon size="100%" />
@@ -103,16 +188,14 @@
         {#if !collapsed}
           <span class="nav-label">{item.label}</span>
         {/if}
-        {#if active === item.id}
-          <div class="active-indicator"></div>
-        {/if}
       </button>
     {/each}
 
     <button
       class="nav-item nav-item-logout"
+      data-mdt-no-ui-sound
+      use:sidebarTooltip={collapsed ? 'Logout' : ''}
       onclick={handleLogout}
-      title={collapsed ? 'Logout' : ''}
     >
       <span class="nav-icon">
         <LogOut size="100%" />
@@ -126,6 +209,7 @@
 
 <style>
   .sidebar {
+    --sb: var(--mdt-sidebar-scale);
     width: var(--mdt-sidebar-expanded);
     min-width: var(--mdt-sidebar-expanded);
     height: 100%;
@@ -133,7 +217,7 @@
     border-right: 1px solid var(--mdt-border);
     display: flex;
     flex-direction: column;
-    padding: calc(8px * var(--mdt-scale)) 0;
+    padding: calc(8px * var(--mdt-scale) * var(--sb)) 0;
     transition: width 0.35s cubic-bezier(0.16, 1, 0.3, 1),
                 min-width 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     overflow: hidden;
@@ -143,31 +227,94 @@
   .sidebar.collapsed {
     width: var(--mdt-sidebar-width);
     min-width: var(--mdt-sidebar-width);
+    overflow: visible;
   }
 
   .nav-main {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
+    gap: calc(2px * var(--mdt-scale) * var(--sb));
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 0 calc(6px * var(--mdt-scale));
+    padding: 0 calc(6px * var(--mdt-scale) * var(--sb));
+  }
+
+  .nav-category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(6px * var(--mdt-scale) * var(--sb)) calc(10px * var(--mdt-scale) * var(--sb));
+    margin-top: calc(6px * var(--mdt-scale) * var(--sb));
+    border: none;
+    background: transparent;
+    color: var(--mdt-text-muted);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: calc(9.5px * var(--mdt-scale) * var(--sb));
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    transition: color 0.15s ease;
+    width: 100%;
+    text-align: left;
+    border-radius: var(--mdt-radius-sm);
+  }
+
+  .nav-category-header:first-child {
+    margin-top: 0;
+  }
+
+  .nav-category-header:hover {
+    color: var(--mdt-text-dim);
+  }
+
+  .nav-category-header.cat-active {
+    color: var(--mdt-accent);
+    opacity: 0.7;
+  }
+
+  .nav-category-label {
+    pointer-events: none;
+  }
+
+  .nav-category-chevron {
+    width: calc(12px * var(--mdt-scale) * var(--sb));
+    height: calc(12px * var(--mdt-scale) * var(--sb));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    transform: rotate(-90deg);
+  }
+
+  .nav-category-chevron.rotated {
+    transform: rotate(0deg);
+  }
+
+  .nav-category-items {
+    display: flex;
+    flex-direction: column;
+    gap: calc(1px * var(--mdt-scale) * var(--sb));
+  }
+
+  .nav-category-items.collapsed-cat {
+    gap: calc(2px * var(--mdt-scale) * var(--sb));
   }
 
   .nav-bottom {
     display: flex;
     flex-direction: column;
-    gap: calc(2px * var(--mdt-scale));
-    padding: 0 calc(6px * var(--mdt-scale));
+    gap: calc(2px * var(--mdt-scale) * var(--sb));
+    padding: 0 calc(6px * var(--mdt-scale) * var(--sb));
   }
 
   .nav-item {
     position: relative;
     display: flex;
     align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    gap: calc(10px * var(--mdt-scale) * var(--sb));
+    padding: calc(8px * var(--mdt-scale) * var(--sb)) calc(10px * var(--mdt-scale) * var(--sb));
     border-radius: var(--mdt-radius);
     border: none;
     background: transparent;
@@ -177,24 +324,39 @@
     overflow: hidden;
     transition: background 0.15s ease, color 0.15s ease;
     font-family: inherit;
-    font-size: calc(13px * var(--mdt-scale));
+    font-size: calc(13px * var(--mdt-scale) * var(--sb));
     width: 100%;
     text-align: left;
   }
 
   .nav-item:hover {
-    background: var(--mdt-surface-3);
     color: var(--mdt-text);
   }
 
   .nav-item.active {
-    background: var(--mdt-accent-dim);
+    background: transparent;
+    color: var(--mdt-text-dim);
+  }
+
+  .nav-item.active .nav-icon {
+    color: var(--mdt-accent);
+  }
+
+  .nav-item.active .nav-label {
+    color: var(--mdt-text-dim);
+  }
+
+  .nav-item.active:hover .nav-label {
+    color: var(--mdt-text);
+  }
+
+  .nav-item.active:hover .nav-icon {
     color: var(--mdt-accent);
   }
 
   .nav-icon {
-    width: calc(20px * var(--mdt-scale));
-    height: calc(20px * var(--mdt-scale));
+    width: calc(20px * var(--mdt-scale) * var(--sb));
+    height: calc(20px * var(--mdt-scale) * var(--sb));
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -210,54 +372,47 @@
   .nav-divider {
     height: 1px;
     background: var(--mdt-border);
-    margin: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
+    margin: calc(6px * var(--mdt-scale) * var(--sb)) calc(10px * var(--mdt-scale) * var(--sb));
   }
 
   .toggle-label {
-    font-size: calc(11px * var(--mdt-scale));
+    font-size: calc(11px * var(--mdt-scale) * var(--sb));
     letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--mdt-text-muted);
   }
 
   .toggle-btn {
-    margin: 0 calc(6px * var(--mdt-scale));
+    margin: 0 calc(6px * var(--mdt-scale) * var(--sb));
+  }
+
+  .sidebar.collapsed .toggle-btn {
+    margin: 0;
   }
 
   .toggle-btn:hover .toggle-label {
     color: var(--mdt-text-dim);
   }
 
-  .active-indicator {
-    position: absolute;
-    left: 0;
-    top: 25%;
-    bottom: 25%;
-    width: calc(3px * var(--mdt-scale));
-    border-radius: 0 999px 999px 0;
-    background: var(--mdt-accent);
-    box-shadow: 0 0 8px var(--mdt-accent-glow);
-  }
-
   .collapsed .nav-item {
     justify-content: center;
-    padding: calc(10px * var(--mdt-scale));
+    padding-left: calc(10px * var(--mdt-scale) * var(--sb));
+    padding-right: calc(10px * var(--mdt-scale) * var(--sb));
   }
 
   .collapsed .nav-label {
     display: none;
   }
 
-  .collapsed .active-indicator {
-    left: 0;
-  }
-
   .nav-item-logout {
-    color: var(--mdt-text-muted);
+    color: var(--mdt-error);
   }
 
   .nav-item-logout:hover {
-    background: rgba(248, 113, 113, 0.10);
-    color: var(--mdt-error);
+    color: #fca5a5;
+  }
+
+  .nav-item-logout .nav-icon {
+    color: inherit;
   }
 </style>
