@@ -734,9 +734,10 @@
       <div class="detail-stack create-form-stack">
         <div class="detail-section">
           <div class="form-group">
-            <label class="form-label">Title</label>
+            <label class="form-label" for="report-create-title">Title</label>
             <input
               type="text"
+              id="report-create-title"
               class="form-input"
               placeholder="Enter report title..."
               bind:value={createTitle}
@@ -744,8 +745,8 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">Template</label>
-            <select class="form-select" bind:value={createTemplate}>
+            <label class="form-label" for="report-create-template">Template</label>
+            <select id="report-create-template" class="form-select" bind:value={createTemplate}>
               {#each REPORT_TEMPLATES as tmpl (tmpl)}
                 <option value={tmpl}>{tmpl}</option>
               {/each}
@@ -753,7 +754,7 @@
           </div>
 
           <div class="form-group">
-            <label class="form-label">Tags</label>
+            <label class="form-label" for="report-create-tags">Tags</label>
             <div class="tags-wrapper">
               {#each createTags as tag (tag)}
                 <span class="tag-pill">
@@ -765,6 +766,7 @@
               {/each}
               <input
                 type="text"
+                id="report-create-tags"
                 class="tag-input"
                 placeholder={createTags.length === 0 ? 'Type and press Enter...' : ''}
                 bind:value={createTagInput}
@@ -776,8 +778,9 @@
 
         <div class="detail-section">
           <div class="form-group">
-            <label class="form-label">Narrative</label>
+            <label class="form-label" for="report-create-narrative">Narrative</label>
             <textarea
+              id="report-create-narrative"
               class="form-textarea create-narrative-textarea"
               placeholder="Describe the incident in detail..."
               bind:value={createNarrative}
@@ -973,9 +976,10 @@
         <div class="detail-main">
           <div class="detail-stack">
             <div class="detail-section">
-              <label class="form-label">Title</label>
+              <label class="form-label" for="report-edit-title">Title</label>
               <input
                 type="text"
+                id="report-edit-title"
                 class="form-input"
                 bind:value={editTitle}
               />
@@ -985,7 +989,7 @@
                   <span>{report.template}</span>
                 </div>
               {/if}
-              <label class="form-label">Tags</label>
+              <label class="form-label" for="report-edit-tags">Tags</label>
               <div class="tags-wrapper">
                 {#each editTags as tag (tag)}
                   <span class="tag-pill">
@@ -997,6 +1001,7 @@
                 {/each}
                 <input
                   type="text"
+                  id="report-edit-tags"
                   class="tag-input"
                   placeholder={editTags.length === 0 ? 'Add tags...' : ''}
                   bind:value={editTagInput}
@@ -1006,8 +1011,9 @@
             </div>
 
             <div class="detail-section">
-              <label class="form-label">Narrative</label>
+              <label class="form-label" for="report-edit-narrative">Narrative</label>
               <textarea
+                id="report-edit-narrative"
                 class="form-textarea narrative-textarea"
                 bind:value={editNarrative}
                 rows="10"
@@ -1278,11 +1284,16 @@
 
   <!-- ─── Charges Picker Modal ─── -->
   {#if showChargesModal}
-    <div class="modal-overlay" onclick={() => showChargesModal = false}>
-      <div class="modal-panel modal-lg" onclick={(e) => e.stopPropagation()}>
+    <div
+      class="modal-overlay"
+      role="presentation"
+      onclick={(event) => { if (event.target === event.currentTarget) showChargesModal = false; }}
+      onkeydown={(event) => { if (event.key === 'Escape') showChargesModal = false; }}
+    >
+      <div class="modal-panel modal-lg" role="dialog" aria-modal="true" aria-labelledby="charges-modal-title">
         <div class="modal-header">
-          <h3 class="modal-title">Select Charge</h3>
-          <button class="modal-close" onclick={() => showChargesModal = false}>
+          <h3 id="charges-modal-title" class="modal-title">Select Charge</h3>
+          <button class="modal-close" onclick={() => showChargesModal = false} aria-label="Close charge picker">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
         </div>
@@ -1337,11 +1348,16 @@
 
   <!-- ─── Participants Search Modal ─── -->
   {#if showParticipantsModal}
-    <div class="modal-overlay" onclick={() => showParticipantsModal = false}>
-      <div class="modal-panel" onclick={(e) => e.stopPropagation()}>
+    <div
+      class="modal-overlay"
+      role="presentation"
+      onclick={(event) => { if (event.target === event.currentTarget) showParticipantsModal = false; }}
+      onkeydown={(event) => { if (event.key === 'Escape') showParticipantsModal = false; }}
+    >
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="participants-modal-title">
         <div class="modal-header">
-          <h3 class="modal-title">Add Participant</h3>
-          <button class="modal-close" onclick={() => showParticipantsModal = false}>
+          <h3 id="participants-modal-title" class="modal-title">Add Participant</h3>
+          <button class="modal-close" onclick={() => showParticipantsModal = false} aria-label="Close participant picker">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12" /></svg>
           </button>
         </div>
@@ -1636,11 +1652,6 @@
     border: 1px solid color-mix(in srgb, var(--badge-color) 25%, transparent);
     white-space: nowrap;
     line-height: 1.4;
-  }
-
-  .status-badge-lg {
-    font-size: calc(11px * var(--mdt-scale));
-    padding: calc(3px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
   }
 
   .td-priority {
@@ -2892,11 +2903,11 @@
     color: var(--mdt-error);
   }
 
-  .toggle-row {
+  :global(.toggle-row) {
     margin-bottom: calc(4px * var(--mdt-scale));
   }
 
-  .toggle-row :global(.mdt-checkbox-label) {
+  :global(.toggle-row .mdt-checkbox-label) {
     font-weight: 500;
     color: var(--mdt-text-dim);
   }

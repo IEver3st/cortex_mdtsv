@@ -4,7 +4,7 @@ import { mdtStore } from './mdt.svelte.js';
 import { normalizeUnitStatus } from '../utils/helpers.js';
 import { DEFAULT_CHARGES, applyChargePatch, normalizeChargesList } from '../data/charges.js';
 
-const DEFAULT_MUGSHOT_URL = 'https://st2.depositphotos.com/2101611/6967/v/450/depositphotos_69670367-stock-illustration-picture-of-anonymous-male-silhouette.jpg';
+const DEFAULT_MUGSHOT_URL = 'default-avatar.svg';
 
 function withDefaultMugshot(row) {
   if (!row || typeof row !== 'object') return row;
@@ -1634,7 +1634,7 @@ function createDataStore() {
           rank: 'Officer',
           department: 'police',
           viewerCount: 1,
-          avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=320&q=70&auto=format&fit=crop',
+          avatar: DEFAULT_MUGSHOT_URL,
         },
         {
           source: 27,
@@ -1643,7 +1643,7 @@ function createDataStore() {
           rank: 'Sergeant',
           department: 'police',
           viewerCount: 0,
-          avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=320&q=70&auto=format&fit=crop',
+          avatar: DEFAULT_MUGSHOT_URL,
         },
       ];
       return { ok: true, bodycams: bodycamsList };

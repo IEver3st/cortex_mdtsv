@@ -627,6 +627,10 @@ local function setExclusiveClaim(source, citizenId)
     end
 
     local session = ensureSession(source)
+    if not session.citizenIds[citizen.citizen_id] and citizen.createdBySource ~= source then
+        return nil, 'You can only claim civilians from your own session.'
+    end
+
     local updatedAt = os.date('!%Y-%m-%dT%H:%M:%SZ')
 
     for id, row in pairs(state.citizens) do

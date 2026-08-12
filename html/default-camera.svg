@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-labelledby="title desc">
+  <title id="title">Camera preview unavailable</title>
+  <desc id="desc">Local placeholder for a camera without a configured image.</desc>
+  <rect width="640" height="360" fill="#0f131a"/>
+  <path d="M0 60h640M0 120h640M0 180h640M0 240h640M0 300h640M80 0v360M160 0v360M240 0v360M320 0v360M400 0v360M480 0v360M560 0v360" stroke="#293241" stroke-width="1"/>
+  <rect x="238" y="121" width="164" height="112" rx="14" fill="#1d2633" stroke="#70809a" stroke-width="6"/>
+  <circle cx="320" cy="177" r="34" fill="none" stroke="#8ea0ba" stroke-width="8"/>
+  <path d="m402 150 54-28v110l-54-28" fill="#70809a"/>
+  <text x="320" y="282" text-anchor="middle" fill="#9ba8bb" font-family="Segoe UI,Arial,sans-serif" font-size="20">LOCAL CAMERA FEED</text>
+</svg>

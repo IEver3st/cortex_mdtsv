@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Generated Vite chunks preserve upstream license-comment spacing.
+html/assets/*.js whitespace=-trailing-space

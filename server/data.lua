@@ -358,6 +358,19 @@ local function getScopedLocalStorageKey(source, key)
     return LocalMode.getScopedStorageKey(source, key)
 end
 
+local function normalizeClientStorageKey(value)
+    local key = trimText(value)
+    if key == '' or #key > 64 or not key:match('^[%w_.:-]+$') then
+        return nil
+    end
+    return key
+end
+
+local function isBoundedJsonValue(value, maxBytes)
+    local ok, encoded = pcall(json.encode, value)
+    return ok and type(encoded) == 'string' and #encoded <= maxBytes
+end
+
 getOfficerId = function(src)
     if usesLocalMode() then
         return LocalMode.getOfficerId(src)
@@ -1912,8 +1925,7 @@ lib.callback.register('cortex_mdt:getMyCitations', function(source)
             return exports.qbx_core:GetPlayer(source)
         end)
         local playerData = ok and player and player.PlayerData or nil
-        local charinfo = type(playerData) == 'table' and type(playerData.charinfo) == 'table' and playerData.charinfo or nil
-        qbxCitizenId = trimText(charinfo and (charinfo.citizenid or charinfo.citizenId))
+        qbxCitizenId = trimText(type(playerData) == 'table' and (playerData.citizenid or playerData.citizenId))
     end
 
     if qbxCitizenId == '' then
@@ -1932,6 +1944,51 @@ lib.callback.register('cortex_mdt:getMyCitations', function(source)
     return { ok = true, citations = fetchCitationRowsForCitizen(qbxCitizenId) }
 end)
 
+local function getSourceCitationIdentities(source)
+    local identities = {}
+    local function add(value)
+        local key = trimText(value)
+        if key ~= '' then
+            identities[key] = true
+        end
+    end
+
+    add(GetPlayerName(source))
+
+    local standalone = getStandaloneCivilianModule()
+    if standalone and type(standalone.getCivilianProfile) == 'function' then
+        local profile = standalone.getCivilianProfile(source)
+        add(profile and (profile.citizenId or profile.citizen_id))
+    end
+
+    if GetResourceState('qbx_core') == 'started' then
+        local ok, player = pcall(function()
+            return exports.qbx_core:GetPlayer(source)
+        end)
+        local playerData = ok and player and player.PlayerData or nil
+        add(type(playerData) == 'table' and (playerData.citizenid or playerData.citizenId))
+    end
+
+    return identities
+end
+
+local function canAccessCitation(source, citation)
+    if getOfficerId(source) then
+        return true
+    end
+
+    if type(citation) ~= 'table' then
+        return false
+    end
+
+    local issuedTo = type(citation.issued_to) == 'table' and citation.issued_to or {}
+    local citizenId = trimText(citation.issued_to_citizen_id or issuedTo.citizen_id)
+    local recipientName = trimText(citation.issued_to_name or issuedTo.name)
+    local identities = getSourceCitationIdentities(source)
+    return (citizenId ~= '' and identities[citizenId] == true)
+        or (recipientName ~= '' and identities[recipientName] == true)
+end
+
 lib.callback.register('cortex_mdt:getCitation', function(source, data)
     if not Config.Citations or Config.Citations.enabled == false then
         return { ok = false, error = 'Citation system is disabled.' }
@@ -1943,12 +2000,20 @@ lib.callback.register('cortex_mdt:getCitation', function(source, data)
     end
 
     if usesLocalMode() then
+        local response = LocalMode.getCitation(citationId)
+        if not response or response.ok ~= true or not canAccessCitation(source, response.citation) then
+            return { ok = false, error = 'Citation not found.' }
+        end
         auditLog(getOfficerId(source) or 0, 'citation_view', 'citation', 'citation', citationId, nil)
-        return LocalMode.getCitation(citationId)
+        return response
     end
 
     local rows = MySQL.query.await('SELECT * FROM mdt_citations WHERE id = ? LIMIT 1', { citationId }) or {}
     if not rows[1] then
+        return { ok = false, error = 'Citation not found.' }
+    end
+
+    if not canAccessCitation(source, rows[1]) then
         return { ok = false, error = 'Citation not found.' }
     end
 
@@ -1974,11 +2039,20 @@ lib.callback.register('cortex_mdt:markCitationViewed', function(source, data)
     end
 
     if usesLocalMode() then
+        local current = LocalMode.getCitation(citationId)
+        if not current or current.ok ~= true or not canAccessCitation(source, current.citation) then
+            return { ok = false, error = 'Citation not found.' }
+        end
         local result = LocalMode.markCitationViewed(citationId)
         if result and result.ok then
             auditLog(getOfficerId(source) or 0, 'citation_mark_viewed', 'citation', 'citation', citationId, nil)
         end
         return result
+    end
+
+    local rows = MySQL.query.await('SELECT * FROM mdt_citations WHERE id = ? LIMIT 1', { citationId }) or {}
+    if not rows[1] or not canAccessCitation(source, rows[1]) then
+        return { ok = false, error = 'Citation not found.' }
     end
 
     MySQL.update.await('UPDATE mdt_citations SET status = CASE WHEN status = ? THEN ? ELSE status END WHERE id = ?', {
@@ -3555,16 +3629,21 @@ AddEventHandler('playerDropped', function()
 end)
 
 lib.callback.register('cortex_mdt:getLocalStorage', function(source, key)
-    local value = LocalStorage.get(getScopedLocalStorageKey(source, key))
-    return { ok = true, key = key, value = value }
+    local safeKey = normalizeClientStorageKey(key)
+    if not safeKey then
+        return { ok = false, error = 'Invalid local storage key.' }
+    end
+    local value = LocalStorage.get(getScopedLocalStorageKey(source, safeKey))
+    return { ok = true, key = safeKey, value = value }
 end)
 
 lib.callback.register('cortex_mdt:setLocalStorage', function(source, data)
-    if not data or not data.key then
-        return { ok = false }
+    local safeKey = type(data) == 'table' and normalizeClientStorageKey(data.key) or nil
+    if not safeKey or not isBoundedJsonValue(data.value, 32768) then
+        return { ok = false, error = 'Invalid local storage payload.' }
     end
-    LocalStorage.set(getScopedLocalStorageKey(source, data.key), data.value)
-    auditLog(getOfficerId(source) or 0, 'local_storage_set', 'client_state', 'local_storage', data.key, nil)
+    LocalStorage.set(getScopedLocalStorageKey(source, safeKey), data.value)
+    auditLog(getOfficerId(source) or 0, 'local_storage_set', 'client_state', 'local_storage', safeKey, nil)
     return { ok = true }
 end)
 
@@ -3590,8 +3669,19 @@ lib.callback.register('cortex_mdt:setLocalStorageMultiple', function(source, dat
     local count = 0
 
     for key, value in pairs(data) do
-        scoped[getScopedLocalStorageKey(source, key)] = value
+        local safeKey = normalizeClientStorageKey(key)
+        if not safeKey or not isBoundedJsonValue(value, 32768) then
+            return { ok = false, error = 'Invalid local storage payload.' }
+        end
         count = count + 1
+        if count > 32 then
+            return { ok = false, error = 'Too many local storage entries.' }
+        end
+        scoped[getScopedLocalStorageKey(source, safeKey)] = value
+    end
+
+    if not isBoundedJsonValue(scoped, 65536) then
+        return { ok = false, error = 'Local storage payload is too large.' }
     end
 
     LocalStorage.setMultiple(scoped)

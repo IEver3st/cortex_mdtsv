@@ -503,19 +503,6 @@
     filter: brightness(1.06);
   }
 
-  .u-btn--icon {
-    flex-shrink: 0;
-    min-width: calc(40px * var(--mdt-scale));
-    min-height: calc(40px * var(--mdt-scale));
-    padding: calc(4px * var(--mdt-scale));
-    line-height: 0;
-  }
-
-  .u-btn--icon svg {
-    width: calc(22px * var(--mdt-scale));
-    height: calc(22px * var(--mdt-scale));
-  }
-
   .u-btn--bare {
     width: 100%;
     border-radius: 0;

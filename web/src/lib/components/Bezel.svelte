@@ -1,10 +1,10 @@
 <script>
-  let { transparentContent = false } = $props();
+  let { transparentContent = false, children } = $props();
 </script>
 
 <div class="bezel-frame">
   <div class="bezel-inner" class:transparent-content={transparentContent}>
-    <slot />
+    {@render children?.()}
   </div>
 </div>
 

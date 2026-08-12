@@ -48,16 +48,53 @@ local function writeStore(data)
     ensureDataDir()
 
     local path = getStoragePath()
-    local file = io.open(path, 'w')
+    local tempPath = path .. '.tmp'
+    local backupPath = path .. '.bak'
+    local content = json.encode(data)
+    local file = io.open(tempPath, 'wb')
 
     if not file then
-        print('[cortex_mdt] Error: Could not open localStorage.json for writing')
+        print('[cortex_mdt] Error: Could not open localStorage.json.tmp for writing')
         return false
     end
 
-    local content = json.encode(data)
     file:write(content)
+    file:flush()
     file:close()
+
+    local verifyFile = io.open(tempPath, 'rb')
+    local verifyContent = verifyFile and verifyFile:read('*a') or nil
+    if verifyFile then verifyFile:close() end
+    local verified, decoded = pcall(json.decode, verifyContent or '')
+    if not verified or type(decoded) ~= 'table' then
+        os.remove(tempPath)
+        print('[cortex_mdt] Error: Refusing to replace localStorage.json with invalid JSON')
+        return false
+    end
+
+    local current = io.open(path, 'rb')
+    local hadCurrent = current ~= nil
+    if current then current:close() end
+
+    os.remove(backupPath)
+    if hadCurrent then
+        local backedUp, backupError = os.rename(path, backupPath)
+        if not backedUp then
+            os.remove(tempPath)
+            print(('[cortex_mdt] Error: Could not back up localStorage.json: %s'):format(tostring(backupError)))
+            return false
+        end
+    end
+
+    local replaced, replaceError = os.rename(tempPath, path)
+    if not replaced then
+        if hadCurrent then
+            os.rename(backupPath, path)
+        end
+        os.remove(tempPath)
+        print(('[cortex_mdt] Error: Could not replace localStorage.json: %s'):format(tostring(replaceError)))
+        return false
+    end
 
     return true
 end

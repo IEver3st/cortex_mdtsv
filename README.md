@@ -25,6 +25,7 @@ Cortex MDT provides an in‑game tablet interface for police, sheriff, highway p
 - **Roster, leaderboard and FTO** — personnel and training records.
 - **CCTV / bodycams** — static security camera placement and live bodycam view with HUD suppression.
 - **Dispatch board** — internal dispatch view plus optional bridge to `cortex-dispatch` or `ps-dispatch`; supports panic and traffic‑stop call creation.
+- **Offline runtime assets** — the dispatch grid, default camera preview, profile placeholder and UI fonts require no public CDN.
 - **Citations** — issue citations from reports; civilians can view them with `/showcitation` or an inventory item.
 - **Dashboard** — announcements, quick search, stats and recent activity.
 - **Settings** — themes, UI scale, hotkeys, quick actions and tablet emote toggle.
@@ -33,19 +34,19 @@ Cortex MDT provides an in‑game tablet interface for police, sheriff, highway p
 ## Requirements
 
 - A FiveM FXServer running the Cfx runtime.
-- The resource `es_lib` must be installed and started before `cortex_mdtsv` (`fxmanifest.lua` declares this dependency).
+- The resource `cortex-lib` must be installed and started before `cortex_mdtsv` (`fxmanifest.lua` declares this dependency).
 - For SQL‑backed framework modes (e.g., `qbx`): a MySQL/MariaDB database and a compatible `MySQL` resource such as `oxmysql`.
 - Optional integrations:
   - `qbx_core` for QBox framework data.
   - `night_ers`, `ers`, or `EmergencyResponseSimulator` for ERS mode.
   - `rpemotes` / `rpemotes-reborn` for the tablet emote.
   - `cortex-dispatch` or `ps-dispatch` for external dispatch bridging.
-  - `es_hud` for bodycam HUD hide/show.
+  - `cortex-hud` for bodycam HUD hide/show.
 
 ## Installation
 
 1. Copy or clone the `cortex_mdtsv` folder into your server `resources` directory, e.g. `resources/[eco]/cortex_mdtsv`.
-2. Make sure `es_lib` is installed and started before this resource.
+2. Make sure `cortex-lib` is installed and started before this resource.
 3. If you are using a database‑backed framework mode, run `sql/schema.sql` against your MySQL/MariaDB database. Apply any additional `sql/migrate_*.sql` files that match your current schema version.
 4. (Optional) Rebuild the UI:
    ```bash
@@ -57,6 +58,14 @@ Cortex MDT provides an in‑game tablet interface for police, sheriff, highway p
 5. Add `ensure [eco]/cortex_mdtsv` (or `ensure cortex_mdtsv`) to your `server.cfg`.
 6. Configure `shared/config.lua` for your framework, departments, ranks, commands, keybinds and optional integrations.
 
+Administrative MDT callbacks are denied unless the player has the configured ACE. The default is:
+
+```cfg
+add_ace group.admin "cortex_mdt.admin" allow
+```
+
+QBX officer access is limited to jobs mapped into `Config.Departments`; ERS access requires an active configured service shift. Standalone officer access remains open by default and can be restricted with `Config.Access.standaloneOfficerAce`.
+
 ## Configuration
 
 All runtime configuration lives in `shared/config.lua`:
@@ -65,6 +74,7 @@ All runtime configuration lives in `shared/config.lua`:
 | --- | --- |
 | `Config.FrameworkMode` | `auto`, `standalone`, `qbx` or `ers` |
 | `Config.FrameworkAutoDetectPriority` | Order used when `FrameworkMode = 'auto'` |
+| `Config.Access` | Standalone officer and mandatory administrative ACE policy |
 | `Config.OpenCommand` | Command to open the MDT (default: `mdt`) |
 | `Config.CivilianCommand` | Command to enter civilian mode (default: `civilian`) |
 | `Config.PoliceCommand` | Command to enter officer duty mode (default: `police`) |
@@ -84,7 +94,7 @@ All runtime configuration lives in `shared/config.lua`:
 
 ## Architecture
 
-- `fxmanifest.lua` declares `version '1.0.0'`, `fx_version 'cerulean'`, `game 'gta5'`, `lua54 'yes'`, `dependency 'es_lib'`, and points `ui_page` at `html/index.html`.
+- `fxmanifest.lua` declares `version '1.0.0'`, `fx_version 'cerulean'`, `game 'gta5'`, `lua54 'yes'`, `dependency 'cortex-lib'`, and points `ui_page` at `html/index.html`.
 - **Client** — `client/main.lua` is the entry point for commands, NUI callbacks, server callbacks, vehicle context, emotes and UI show/hide. `client/cameras.lua` manages CCTV/bodycam view. `client/dispatch.lua` handles live unit coordinates and dispatch blips.
 - **Server** — `server/main.lua` sets up framework detection, the callback registry, officer/civilian profile building and core events. `server/data.lua` contains data access and business logic. `server/dispatch.lua` runs the dispatch board and external bridges. `server/cameras.lua` persists cameras. Framework providers live under `server/framework/`, storage under `server/storage/`, and page handlers under `server/pages/`.
 - **Shared** — `shared/config.lua` is loaded by both client and server and defines all configurable tables.
@@ -109,7 +119,7 @@ For database modes, execute the table definitions in `sql/schema.sql` against yo
 ## Limitations
 
 - Released under the [MIT License](LICENSE).
-- `node_modules` was tracked in earlier revisions and is staged/deleted in the working tree. Release archives should not include `node_modules` or `web/node_modules`.
+- Release archives do not include `node_modules` or `web/node_modules`.
 - SQL‑backed modes require an active MySQL/MariaDB connection compatible with the `MySQL` global.
 - Optional dispatch and framework integrations are not required, but full feature parity depends on them.
 - The resource exports `getOfficerData`, `isOfficerOnDuty` and `getFrameworkMode` for external use.

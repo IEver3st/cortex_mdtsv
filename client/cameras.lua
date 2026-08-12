@@ -1,6 +1,6 @@
 local activeCamera = nil
 local activeView = nil
---- Bodycam HUD: es_hud toggleHud only (toggleMap duplicates minimap refresh + races bigmap collapse).
+--- Bodycam HUD: cortex-hud toggleHud only (toggleMap duplicates minimap refresh + races bigmap collapse).
 local bodycamHudSuppressed = false
 local bodycamHudUsedEsExport = false
 
@@ -8,10 +8,10 @@ local bodycamHudUsedEsExport = false
 local BODYCAM_ALLOWED_CONTROLS = { 21, 32, 33, 34, 35, 36, 38, 44, 45 }
 
 local function tryEsHudBodycamVisibility(show)
-    if GetResourceState('es_hud') ~= 'started' then
+    if GetResourceState('cortex-hud') ~= 'started' then
         return false
     end
-    local ex = exports['es_hud']
+    local ex = exports['cortex-hud']
     if type(ex) ~= 'table' or type(ex.toggleHud) ~= 'function' then
         return false
     end
@@ -37,7 +37,7 @@ local function restoreBodycamHud()
         return
     end
     if bodycamHudUsedEsExport then
-        local ex = exports['es_hud']
+        local ex = exports['cortex-hud']
         if type(ex) == 'table' and type(ex.toggleHud) == 'function' then
             pcall(function()
                 ex:toggleHud(true)

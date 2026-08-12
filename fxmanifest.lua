@@ -2,10 +2,10 @@ fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
 
-dependency 'es_lib'
+dependency 'cortex-lib'
 
 description 'Cortex MDT - Mobile Data Terminal'
-author 'Ever3st'
+author 'Cortex'
 version '1.0.0'
 
 exports {
@@ -15,7 +15,7 @@ exports {
 }
 
 shared_scripts {
-    '@es_lib/init.lua',
+    '@cortex-lib/init.lua',
     'shared/config.lua',
 }
 

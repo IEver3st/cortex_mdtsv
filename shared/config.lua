@@ -11,6 +11,16 @@ Config.FrameworkAutoDetectPriority = { 'ers', 'qbx', 'standalone' }
 -- Backwards-compatible alias.
 Config.Framework = Config.FrameworkMode
 
+-- Server callback access policy. In QBX mode, officer access is limited to
+-- jobs mapped into Config.Departments. In ERS mode, an active configured
+-- service shift is required. Standalone mode remains open by default; set
+-- standaloneOfficerAce to an ACE string to restrict the officer portal.
+-- Administrative mutations always require adminAce.
+Config.Access = {
+    standaloneOfficerAce = false,
+    adminAce = 'cortex_mdt.admin',
+}
+
 -- Command to open the MDT
 Config.OpenCommand = 'mdt'
 
@@ -58,7 +68,7 @@ Config.StandaloneCivilianMode = {
 }
 
 -- Default citizen mugshot used whenever a player/citizen record has no custom image.
-Config.DefaultMugshot = 'https://st2.depositphotos.com/2101611/6967/v/450/depositphotos_69670367-stock-illustration-picture-of-anonymous-male-silhouette.jpg'
+Config.DefaultMugshot = 'default-avatar.svg'
 
 -- File-backed audit logs. Stored as daily NDJSON under data/audit.
 -- Change retentionDays to choose how long logs stay on disk.
@@ -252,7 +262,7 @@ Config.Dispatch = {
     bridgeRefreshDebounceMs = 1200,
     allowExternalLifecycleReadOnly = true,
     map = {
-        tileUrl = 'https://s.rsg.sc/sc/images/games/GTAV/map/game/{z}/{x}/{y}.jpg',
+        tileUrl = false,
         minZoom = 2,
         maxZoom = 7,
         startZoom = 5,

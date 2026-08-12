@@ -35,8 +35,75 @@ CortexStandaloneCivilian = StandaloneCivilian
 
 local rawRegisterCallback = lib and lib.callback and lib.callback.register
 local registeredServerCallbacks = {}
+local callbackRateBuckets = {}
+local authorizeServerCallback
+
+local PUBLIC_CALLBACKS = {
+    ['cortex_mdt:ersBiometricLogin'] = true,
+    ['cortex_mdt:getCivilianProfile'] = true,
+    ['cortex_mdt:getStandaloneCivilianState'] = true,
+    ['cortex_mdt:generateStandaloneCivilian'] = true,
+    ['cortex_mdt:registerStandaloneCivilian'] = true,
+    ['cortex_mdt:claimStandaloneCivilian'] = true,
+    ['cortex_mdt:unclaimStandaloneCivilian'] = true,
+    ['cortex_mdt:updateStandaloneCivilian'] = true,
+    ['cortex_mdt:deleteStandaloneCivilian'] = true,
+    ['cortex_mdt:registerStandaloneVehicle'] = true,
+    ['cortex_mdt:deleteStandaloneVehicle'] = true,
+    ['cortex_mdt:getMyCitations'] = true,
+    ['cortex_mdt:getCitation'] = true,
+    ['cortex_mdt:markCitationViewed'] = true,
+    ['cortex_mdt:getConfig'] = true,
+    ['cortex_mdt:getLocalStorage'] = true,
+    ['cortex_mdt:setLocalStorage'] = true,
+    ['cortex_mdt:getAllLocalStorage'] = true,
+    ['cortex_mdt:setLocalStorageMultiple'] = true,
+}
+
+local ADMIN_CALLBACKS = {
+    ['cortex_mdt:createLicenseType'] = true,
+    ['cortex_mdt:updateLicenseType'] = true,
+    ['cortex_mdt:deleteLicenseType'] = true,
+    ['cortex_mdt:updateOfficerAdmin'] = true,
+    ['cortex_mdt:getAuditLogs'] = true,
+    ['cortex_mdt:createAnnouncement'] = true,
+    ['cortex_mdt:deleteAnnouncement'] = true,
+    ['cortex_mdt:updateCharge'] = true,
+    ['cortex_mdt:updateSetting'] = true,
+}
+
+local function allowCallbackRequest(source, bucketName, limit, windowMs)
+    source = tonumber(source)
+    if not source or source <= 0 then
+        return false
+    end
+
+    local now = GetGameTimer()
+    local sourceBuckets = callbackRateBuckets[source]
+    if not sourceBuckets then
+        sourceBuckets = {}
+        callbackRateBuckets[source] = sourceBuckets
+    end
+
+    local bucket = sourceBuckets[bucketName]
+    if not bucket or now < bucket.startedAt or now - bucket.startedAt >= windowMs then
+        sourceBuckets[bucketName] = { startedAt = now, count = 1 }
+        return true
+    end
+
+    if bucket.count >= limit then
+        return false
+    end
+
+    bucket.count = bucket.count + 1
+    return true
+end
 
 local function executeServerCallback(name, source, ...)
+    if type(name) ~= 'string' or #name > 96 then
+        return { ok = false, error = 'Invalid server callback name.', code = 'invalid_callback' }
+    end
+
     local handler = registeredServerCallbacks[name]
 
     if type(handler) ~= 'function' then
@@ -46,7 +113,32 @@ local function executeServerCallback(name, source, ...)
         }
     end
 
+    if not allowCallbackRequest(source, 'all', 40, 5000) then
+        return { ok = false, error = 'Too many requests. Please slow down.', code = 'rate_limited' }
+    end
+
+    if ADMIN_CALLBACKS[name] and not allowCallbackRequest(source, 'admin', 10, 10000) then
+        return { ok = false, error = 'Too many administrative requests. Please slow down.', code = 'rate_limited' }
+    end
+
+    if type(authorizeServerCallback) ~= 'function' then
+        return { ok = false, error = 'Server access policy is not ready.', code = 'access_unavailable' }
+    end
+
+    local allowed, accessError, accessCode = authorizeServerCallback(name, source)
+    if not allowed then
+        return {
+            ok = false,
+            error = accessError or 'You are not authorized to use this MDT callback.',
+            code = accessCode or 'forbidden',
+        }
+    end
+
     local args = { ... }
+    local encodedOk, encodedArgs = pcall(json.encode, args)
+    if not encodedOk or type(encodedArgs) ~= 'string' or #encodedArgs > 262144 then
+        return { ok = false, error = 'Server callback payload is invalid or too large.', code = 'invalid_payload' }
+    end
     local ok, result = xpcall(function()
         return handler(source, table.unpack(args))
     end, debug.traceback)
@@ -84,6 +176,11 @@ end
 
 RegisterNetEvent('cortex_mdt:serverCallback', function(name, requestId, ...)
     local source = source
+    local requestType = type(requestId)
+    if (requestType ~= 'number' and requestType ~= 'string')
+        or (requestType == 'string' and (#requestId == 0 or #requestId > 64)) then
+        return
+    end
     local response = executeServerCallback(name, source, ...)
     TriggerClientEvent('cortex_mdt:serverCallbackResponse', source, requestId, response)
 end)
@@ -471,6 +568,10 @@ local function buildQbxOfficer(source)
     local metadataKeys = type(qbxConfig.callsignMetadataKeys) == 'table' and qbxConfig.callsignMetadataKeys or { 'callsign', 'callSign' }
     local jobKey = trim(job.name):lower()
     local mappedDepartment = type(qbxConfig.jobDepartmentMap) == 'table' and qbxConfig.jobDepartmentMap[jobKey] or nil
+    local departmentKey = resolveDepartmentKey(trim(mappedDepartment) ~= '' and mappedDepartment or jobKey)
+    if type(Config.Departments) ~= 'table' or type(Config.Departments[departmentKey]) ~= 'table' then
+        return nil
+    end
 
     return createOfficerPayload(source, {
         firstName = readText(charinfo, { 'firstname', 'firstName', 'first_name' }),
@@ -478,7 +579,7 @@ local function buildQbxOfficer(source)
         fullName = readText(playerData, { 'name' }),
         rank = readText(grade, { 'name', 'label' }),
         callsign = readText(metadata, metadataKeys),
-        departmentKey = trim(mappedDepartment) ~= '' and mappedDepartment or (jobKey ~= '' and jobKey or qbxConfig.fallbackDepartment),
+        departmentKey = departmentKey,
         departmentLabel = readText(job, { 'label' }),
         rankFallback = qbxConfig.rankFallback,
     })
@@ -524,12 +625,16 @@ local function buildErsOfficer(source)
         end
     end
 
-    if responder == nil and onShift ~= true then
+    if onShift ~= true then
         return nil
     end
 
     local serviceKey = trim(serviceType):lower()
     local mappedDepartment = type(ersConfig.serviceDepartmentMap) == 'table' and ersConfig.serviceDepartmentMap[serviceKey] or nil
+    local departmentKey = resolveDepartmentKey(trim(mappedDepartment) ~= '' and mappedDepartment or serviceKey)
+    if type(Config.Departments) ~= 'table' or type(Config.Departments[departmentKey]) ~= 'table' then
+        return nil
+    end
 
     return createOfficerPayload(source, {
         firstName = responder and readText(responder, { 'firstName' }) or '',
@@ -537,7 +642,7 @@ local function buildErsOfficer(source)
         fullName = responder and readText(responder, { 'fullName', 'name' }) or '',
         rank = responder and readText(responder, { 'rank', 'rankLabel', 'grade' }) or '',
         callsign = responder and readText(responder, { 'mdtCallsign', 'callsign' }) or ersConfig.callsignFallback,
-        departmentKey = trim(mappedDepartment) ~= '' and mappedDepartment or (serviceKey ~= '' and serviceKey or ersConfig.fallbackDepartment),
+        departmentKey = departmentKey,
         departmentLabel = responder and readText(responder, { 'serviceLabel', 'serviceName' }) or serviceType,
         rankFallback = ersConfig.rankFallback,
     })
@@ -566,6 +671,107 @@ local function getErsShiftState(source, ersResource)
     return onShift, serviceType
 end
 
+local function resolveAccessDepartment(rawDepartment, explicitMap)
+    local key = trim(rawDepartment):lower()
+    local mapped = type(explicitMap) == 'table' and explicitMap[key] or nil
+    if trim(mapped) ~= '' then
+        key = trim(mapped):lower()
+    elseif type(Config.DepartmentAliases) == 'table' and trim(Config.DepartmentAliases[key]) ~= '' then
+        key = trim(Config.DepartmentAliases[key]):lower()
+    end
+
+    return key
+end
+
+local function isConfiguredService(rawDepartment, explicitMap)
+    local key = resolveAccessDepartment(rawDepartment, explicitMap)
+    return key ~= '' and type(Config.Departments) == 'table' and type(Config.Departments[key]) == 'table'
+end
+
+local function isQbxServiceMember(source)
+    local qbxResource = getQbxResourceName()
+    if not isResourceStarted(qbxResource) then
+        return false
+    end
+
+    local ok, player = pcall(function()
+        return exports[qbxResource]:GetPlayer(source)
+    end)
+    local playerData = ok and player and player.PlayerData or nil
+    local job = type(playerData) == 'table' and type(playerData.job) == 'table' and playerData.job or nil
+    if not job then
+        return false
+    end
+
+    local qbxConfig = getFrameworkConfig('qbx')
+    return isConfiguredService(job.name, qbxConfig.jobDepartmentMap)
+end
+
+local function isErsServiceMember(source)
+    local ersResource = resolveErsResourceName()
+    if not isResourceStarted(ersResource) then
+        return false
+    end
+
+    local onShift, serviceType = getErsShiftState(source, ersResource)
+    if onShift ~= true then
+        return false
+    end
+
+    local ersConfig = getFrameworkConfig('ers')
+    return isConfiguredService(serviceType, ersConfig.serviceDepartmentMap)
+end
+
+local function isStandaloneOfficer(source)
+    local access = type(Config.Access) == 'table' and Config.Access or {}
+    if access.standaloneOfficerAce == nil or access.standaloneOfficerAce == false then
+        return true
+    end
+    local ace = trim(access.standaloneOfficerAce)
+    return ace == '' or IsPlayerAceAllowed(source, ace)
+end
+
+local function isAuthorizedOfficer(source)
+    local mode = refreshFrameworkMode()
+    if mode == 'qbx' then
+        return isQbxServiceMember(source)
+    end
+    if mode == 'ers' then
+        return isErsServiceMember(source)
+    end
+    return isStandaloneOfficer(source)
+end
+
+authorizeServerCallback = function(name, source)
+    if PUBLIC_CALLBACKS[name] then
+        return true
+    end
+
+    if not isAuthorizedOfficer(source) then
+        return false, 'An authorized emergency-service profile is required.', 'officer_required'
+    end
+
+    if ADMIN_CALLBACKS[name] then
+        local access = type(Config.Access) == 'table' and Config.Access or {}
+        local adminAce = trim(access.adminAce)
+        if adminAce == '' or not IsPlayerAceAllowed(source, adminAce) then
+            return false, 'MDT administrator permission is required.', 'admin_required'
+        end
+    end
+
+    return true
+end
+
+CortexMdtAccess = {
+    isOfficer = isAuthorizedOfficer,
+    isAdmin = function(source)
+        if not isAuthorizedOfficer(source) then return false end
+        local access = type(Config.Access) == 'table' and Config.Access or {}
+        local adminAce = trim(access.adminAce)
+        return adminAce ~= '' and IsPlayerAceAllowed(source, adminAce)
+    end,
+}
+
 AddEventHandler('cortex_mdt:ers:shiftConfirmed', function(playerSource, isOnShift, serviceType)
     local source = tonumber(playerSource)
 
@@ -582,6 +788,7 @@ end)
 
 AddEventHandler('playerDropped', function()
     pendingErsShiftUpdates[source] = nil
+    callbackRateBuckets[source] = nil
 end)
 
 local function getErsShiftConfirmation(source, ersResource)
@@ -815,9 +1022,11 @@ buildOfficerProfile = function(source, skipLocalPreferences)
         officer = buildQbxOfficer(source)
     end
 
-    if not officer then
+    if not officer and mode == 'standalone' then
         officer = buildStandaloneOfficer(source)
     end
+
+    if not officer then return nil end
 
     if mode ~= 'qbx' and not skipLocalPreferences then
         officer = LocalMode.applyProfilePreferences(source, officer)
@@ -1629,7 +1838,56 @@ registerStandaloneDataFallback('cortex_mdt:getMyCitations', function(source)
     return results
 end)
 
-registerStandaloneDataFallback('cortex_mdt:getCitation', function(_, data)
+local function normalizeFallbackCitationIdentity(value)
+    return trim(value):lower():gsub('%s+', ' ')
+end
+
+local function canAccessFallbackCitation(source, citation)
+    if isAuthorizedOfficer(source) then
+        return true
+    end
+
+    if type(citation) ~= 'table' then
+        return false
+    end
+
+    local issuedTo = type(citation.issued_to) == 'table' and citation.issued_to or {}
+    local recipientCitizenId = normalizeFallbackCitationIdentity(
+        citation.issued_to_citizen_id or issuedTo.citizen_id
+    )
+    local recipientName = normalizeFallbackCitationIdentity(
+        citation.issued_to_name or issuedTo.name
+    )
+
+    local standalone = rawget(_G, 'CortexStandaloneCivilian')
+    if standalone and type(standalone.getCivilianProfile) == 'function' then
+        local profile = standalone.getCivilianProfile(source)
+        local profileCitizenId = type(profile) == 'table' and normalizeFallbackCitationIdentity(
+            profile.citizenId or profile.citizen_id
+        ) or ''
+        if profileCitizenId ~= '' and profileCitizenId == recipientCitizenId then
+            return true
+        end
+    end
+
+    local playerName = normalizeFallbackCitationIdentity(GetPlayerName(source))
+    return playerName ~= '' and playerName == recipientName
+end
+
+local function getAuthorizedFallbackCitation(source, citationId)
+    local result = LocalMode.getCitation(citationId)
+    if not result or result.ok ~= true or type(result.citation) ~= 'table' then
+        return result or { ok = false, error = 'Citation not found.' }
+    end
+
+    if not canAccessFallbackCitation(source, result.citation) then
+        return { ok = false, error = 'Citation not found.' }
+    end
+
+    return result
+end
+
+registerStandaloneDataFallback('cortex_mdt:getCitation', function(source, data)
     if not Config.Citations or Config.Citations.enabled == false then
         return { ok = false, error = 'Citation system is disabled.' }
     end
@@ -1639,10 +1897,10 @@ registerStandaloneDataFallback('cortex_mdt:getCitation', function(_, data)
         return { ok = false, error = 'Missing citation ID.' }
     end
 
-    return LocalMode.getCitation(citationId)
+    return getAuthorizedFallbackCitation(source, citationId)
 end)
 
-registerStandaloneDataFallback('cortex_mdt:markCitationViewed', function(_, data)
+registerStandaloneDataFallback('cortex_mdt:markCitationViewed', function(source, data)
     if not Config.Citations or Config.Citations.enabled == false then
         return { ok = false }
     end
@@ -1650,6 +1908,11 @@ registerStandaloneDataFallback('cortex_mdt:markCitationViewed', function(_, data
     local citationId = tonumber(data and data.citationId)
     if not citationId then
         return { ok = false, error = 'Missing citation ID.' }
+    end
+
+    local authorized = getAuthorizedFallbackCitation(source, citationId)
+    if not authorized or authorized.ok ~= true then
+        return authorized
     end
 
     return LocalMode.markCitationViewed(citationId)

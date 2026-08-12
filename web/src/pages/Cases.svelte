@@ -319,11 +319,11 @@
         </div>
 
         <div class="pagination">
-          <button class="pag-btn" onclick={prevPage} disabled={currentPage <= 1}>
+          <button class="pag-btn" onclick={prevPage} disabled={currentPage <= 1} aria-label="Previous cases page">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 19l-7-7 7-7" /></svg>
           </button>
           <span class="pag-info font-mono">{currentPage} / {totalPages}</span>
-          <button class="pag-btn" onclick={nextPage} disabled={currentPage >= totalPages}>
+          <button class="pag-btn" onclick={nextPage} disabled={currentPage >= totalPages} aria-label="Next cases page">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 5l7 7-7 7" /></svg>
           </button>
         </div>
@@ -354,9 +354,10 @@
 
       <div class="create-form">
         <div class="form-group">
-          <label class="form-label">Title</label>
+          <label class="form-label" for="case-create-title">Title</label>
           <input
             type="text"
+            id="case-create-title"
             class="text-input"
             placeholder="Case title..."
             bind:value={createTitle}
@@ -364,8 +365,9 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Description</label>
+          <label class="form-label" for="case-create-description">Description</label>
           <textarea
+            id="case-create-description"
             class="form-textarea"
             placeholder="Describe the investigation..."
             rows="6"
@@ -374,14 +376,15 @@
         </div>
 
         <div class="form-group">
-          <label class="form-label">Priority</label>
-          <div class="priority-selector">
+          <span class="form-label" id="case-create-priority-label">Priority</span>
+          <div class="priority-selector" role="radiogroup" aria-labelledby="case-create-priority-label">
             {#each PRIORITIES as p (p.key)}
               <button
                 class="priority-option"
                 class:active={createPriority === p.key}
                 style="--pri-color: {p.color}"
                 onclick={() => createPriority = p.key}
+                aria-pressed={createPriority === p.key}
               >
                 <span class="priority-dot" style="background: {p.color}"></span>
                 {p.label}

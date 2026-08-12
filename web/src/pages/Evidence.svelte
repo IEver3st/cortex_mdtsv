@@ -330,11 +330,11 @@
         </div>
 
         <div class="pagination">
-          <button class="page-btn" onclick={prevPage} disabled={currentPage <= 1}>
+          <button class="page-btn" onclick={prevPage} disabled={currentPage <= 1} aria-label="Previous evidence page">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6" /></svg>
           </button>
           <span class="page-info font-mono">Page {currentPage} of {totalPages}</span>
-          <button class="page-btn" onclick={nextPage} disabled={currentPage >= totalPages}>
+          <button class="page-btn" onclick={nextPage} disabled={currentPage >= totalPages} aria-label="Next evidence page">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6" /></svg>
           </button>
         </div>
@@ -494,7 +494,7 @@
             <div class="detail-section">
               <h3 class="section-label">Photo</h3>
               <div class="detail-photo-frame">
-                <img src={detail.photo_url} alt="Evidence photo" class="detail-photo-img" />
+                <img src={detail.photo_url} alt="Primary evidence record" class="detail-photo-img" />
               </div>
             </div>
           {/if}
@@ -555,32 +555,32 @@
           <div class="custody-section">
             <h3 class="section-label">Update Record</h3>
             <div class="form-group">
-              <label class="form-label">Type</label>
-              <select class="form-select" bind:value={editType}>
+              <label class="form-label" for="evidence-edit-type">Type</label>
+              <select id="evidence-edit-type" class="form-select" bind:value={editType}>
                 {#each EVIDENCE_TYPES as t (t.value)}
                   <option value={t.value}>{t.label}</option>
                 {/each}
               </select>
             </div>
             <div class="form-group">
-              <label class="form-label">Serial Number</label>
-              <input class="form-input font-mono" bind:value={editSerialNumber} placeholder="SN-000000" />
+              <label class="form-label" for="evidence-edit-serial">Serial Number</label>
+              <input id="evidence-edit-serial" class="form-input font-mono" bind:value={editSerialNumber} placeholder="SN-000000" />
             </div>
             <div class="form-group">
-              <label class="form-label">Description</label>
-              <textarea class="form-textarea" rows="3" bind:value={editDescription}></textarea>
+              <label class="form-label" for="evidence-edit-description">Description</label>
+              <textarea id="evidence-edit-description" class="form-textarea" rows="3" bind:value={editDescription}></textarea>
             </div>
             <div class="form-group">
-              <label class="form-label">Photo URL</label>
-              <input class="form-input" bind:value={editPhotoUrl} placeholder="https://..." />
+              <label class="form-label" for="evidence-edit-photo-url">Photo URL</label>
+              <input id="evidence-edit-photo-url" class="form-input" bind:value={editPhotoUrl} placeholder="https://..." />
             </div>
             <div class="form-group">
-              <label class="form-label">Stash Location</label>
-              <input class="form-input" bind:value={editStashLocation} placeholder="Locker / vault" />
+              <label class="form-label" for="evidence-edit-stash">Stash Location</label>
+              <input id="evidence-edit-stash" class="form-input" bind:value={editStashLocation} placeholder="Locker / vault" />
             </div>
             <div class="form-group">
-              <label class="form-label">Status</label>
-              <select class="form-select" bind:value={editStatus}>
+              <label class="form-label" for="evidence-edit-status">Status</label>
+              <select id="evidence-edit-status" class="form-select" bind:value={editStatus}>
                 {#each TRANSFER_STATUSES as s (s.value)}
                   <option value={s.value}>{s.label}</option>
                 {/each}
@@ -622,20 +622,20 @@
             {/if}
 
             <div class="form-group">
-              <label class="form-label">File Name</label>
-              <input class="form-input" bind:value={attachmentName} placeholder="Lab report.pdf" />
+              <label class="form-label" for="evidence-attachment-name">File Name</label>
+              <input id="evidence-attachment-name" class="form-input" bind:value={attachmentName} placeholder="Lab report.pdf" />
             </div>
             <div class="form-group">
-              <label class="form-label">File URL</label>
-              <input class="form-input" bind:value={attachmentUrl} placeholder="https://..." />
+              <label class="form-label" for="evidence-attachment-url">File URL</label>
+              <input id="evidence-attachment-url" class="form-input" bind:value={attachmentUrl} placeholder="https://..." />
             </div>
             <div class="form-group">
-              <label class="form-label">File Type</label>
-              <input class="form-input" bind:value={attachmentType} placeholder="pdf, image, doc..." />
+              <label class="form-label" for="evidence-attachment-type">File Type</label>
+              <input id="evidence-attachment-type" class="form-input" bind:value={attachmentType} placeholder="pdf, image, doc..." />
             </div>
             <div class="form-group">
-              <label class="form-label">Notes</label>
-              <input class="form-input" bind:value={attachmentNotes} placeholder="Optional notes" />
+              <label class="form-label" for="evidence-attachment-notes">Notes</label>
+              <input id="evidence-attachment-notes" class="form-input" bind:value={attachmentNotes} placeholder="Optional notes" />
             </div>
             <button class="btn-primary" onclick={handleAddAttachment} disabled={creating || !attachmentName.trim() || !attachmentUrl.trim()}>
               {#if creating}Saving...{:else}Add Attachment{/if}

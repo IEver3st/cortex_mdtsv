@@ -210,22 +210,6 @@ local function getStandaloneVehicleContext()
     }
 end
 
-local function buildFallbackOfficer()
-    local dept = Config.Departments[Config.DefaultDepartment] or Config.Departments['police']
-    local playerName = GetPlayerName(PlayerId()) or 'Unknown'
-
-    return {
-        firstName = playerName,
-        lastName = '',
-        rank = Config.ServiceRanks and Config.ServiceRanks[Config.DefaultDepartment] or 'Officer',
-        callsign = tostring(GetPlayerServerId(PlayerId())),
-        department = dept and dept.label or 'Department',
-        departmentShort = dept and dept.short or 'MDT',
-        avatar = nil,
-        frameworkMode = 'standalone',
-    }
-end
-
 local function buildFallbackCivilian()
     local playerName = GetPlayerName(PlayerId()) or 'Unknown'
     return {
@@ -239,7 +223,7 @@ local function getOfficerProfile()
     local officer = awaitServerCallback('cortex_mdt:getOfficerProfile')
 
     if type(officer) ~= 'table' or officer.ok == false then
-        return buildFallbackOfficer()
+        return nil, type(officer) == 'table' and officer.error or 'Officer profile is unavailable.'
     end
 
     return officer
@@ -274,6 +258,12 @@ end
 
 local function openMDT()
     if isOpen then return end
+    local officer, accessError = getOfficerProfile()
+    if not officer then
+        print(('[cortex_mdt] MDT access denied: %s'):format(tostring(accessError or 'Officer authorization required.')))
+        return
+    end
+
     isOpen = true
     CortexMdtNuiOpen = true
     currentMode = 'pd'
@@ -282,7 +272,7 @@ local function openMDT()
         action = 'cortex_mdt:show',
         data = {
             mode = 'pd',
-            officer = getOfficerProfile(),
+            officer = officer,
         },
     })
 

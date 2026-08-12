@@ -92,7 +92,7 @@
   --mdt-accent-glow: rgba(167, 139, 250, 0.25);
 }
 
-/* ── Theme: Cyan (es_lib compatible) ── */
+/* ── Theme: Cyan (cortex-lib compatible) ── */
 [data-theme="cyan"] {
   --mdt-accent: #22d3ee;
   --mdt-accent-dim: rgba(34, 211, 238, 0.15);

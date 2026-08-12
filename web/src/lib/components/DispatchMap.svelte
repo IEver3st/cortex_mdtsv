@@ -13,7 +13,6 @@
   let hasInitialView = false;
   let lastFocusKey = null;
 
-  const OX_TILE_URL = 'https://s.rsg.sc/sc/images/games/GTAV/map/game/{z}/{x}/{y}.jpg';
   const OX_MAP_CENTER = [-119.43, 58.84];
   const OX_LAT_PR_100 = 1.421;
   const OX_MIN_ZOOM = 2;
@@ -76,6 +75,15 @@
     return isUnitOnDuty(unit?.status);
   }
 
+  function createPopup(title, subtitle) {
+    const wrapper = document.createElement('div');
+    wrapper.style.fontSize = '12px';
+    const heading = document.createElement('strong');
+    heading.textContent = String(title || 'Unknown');
+    wrapper.append(heading, document.createElement('br'), document.createTextNode(String(subtitle || '')));
+    return wrapper;
+  }
+
   onMount(() => {
     if (!mapContainer) return;
 
@@ -91,14 +99,6 @@
       crs: L.CRS.Simple,
       attributionControl: false,
     });
-
-    L.tileLayer(OX_TILE_URL, {
-      bounds: OX_MAP_BOUNDS,
-      minZoom: OX_MIN_ZOOM,
-      maxZoom: OX_MAX_ZOOM,
-      noWrap: true,
-      updateWhenIdle: true,
-    }).addTo(mapInstance);
 
     requestAnimationFrame(() => {
       mapInstance.invalidateSize(false);
@@ -132,10 +132,11 @@
         const marker = callMarkers.get(call.id);
         marker.setLatLng(latlng);
         marker.setIcon(createCallIcon(tone, selected));
+        marker.setPopupContent(createPopup(`${call.code || ''} - ${call.title || ''}`, call.location));
       } else {
         const marker = L.marker(latlng, { icon: createCallIcon(tone, selected) });
         marker.on('click', () => onSelectCall(call.id));
-        marker.bindPopup(`<div style="font-size:12px"><strong>${call.code} - ${call.title}</strong><br/>${call.location}</div>`);
+        marker.bindPopup(createPopup(`${call.code || ''} - ${call.title || ''}`, call.location));
         marker.addTo(mapInstance);
         callMarkers.set(call.id, marker);
       }
@@ -166,9 +167,10 @@
         const marker = unitMarkers.get(key);
         marker.setLatLng(latlng);
         marker.setIcon(createUnitIcon(active));
+        marker.setPopupContent(createPopup(unit.callsign || unit.name, unit.availability));
       } else {
         const marker = L.marker(latlng, { icon: createUnitIcon(active) });
-        marker.bindPopup(`<div style="font-size:12px"><strong>${unit.callsign || unit.name}</strong><br/>${unit.availability}</div>`);
+        marker.bindPopup(createPopup(unit.callsign || unit.name, unit.availability));
         marker.addTo(mapInstance);
         unitMarkers.set(key, marker);
       }
@@ -244,7 +246,12 @@
     min-height: 200px;
     border-radius: var(--mdt-radius);
     overflow: hidden;
-    background: var(--mdt-bg);
+    background-color: var(--mdt-bg);
+    background-image:
+      linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px),
+      radial-gradient(circle at 50% 48%, rgba(59, 130, 246, 0.11), transparent 58%);
+    background-size: 32px 32px, 32px 32px, 100% 100%;
   }
 
   :global(.dispatch-call-marker),

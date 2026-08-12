@@ -7,15 +7,68 @@ local allowExternalLifecycleReadOnly = cfg.allowExternalLifecycleReadOnly ~= fal
 
 local activeCalls, callOrder, attachments = {}, {}, {}
 local nextDispatchId = 1
-local subscribers, panicCooldowns, liveUnits = {}, {}, {}
+local subscribers, panicCooldowns, trafficStopCooldowns, liveUnits, lastUnitUpdates = {}, {}, {}, {}, {}
 local bridgeRefreshScheduled = false
 
-local function trim(v) if v == nil then return '' end return tostring(v):match('^%s*(.-)%s*$') or '' end
+local function trim(v) if v == nil then return '' end local text = tostring(v):match('^%s*(.-)%s*$') or '' if #text > 1024 then return text:sub(1, 1024) end return text end
 local function clampPriority(v) local n = tonumber(v) or 3 if n < 1 then n = 1 elseif n > 5 then n = 5 end return math.floor(n) end
-local function normalizeCoords(input) if type(input) ~= 'table' then return nil end local x = tonumber(input.x or input[1]); local y = tonumber(input.y or input[2]); local z = tonumber(input.z or input[3]); if not x or not y then return nil end return { x = x + 0.0, y = y + 0.0, z = (z or 0) + 0.0 } end
-local function shallow(input) local out = {} if type(input) ~= 'table' then return out end for k,v in pairs(input) do out[k]=v end return out end
-local function copyArray(input) local out = {} if type(input) ~= 'table' then return out end for i=1,#input do out[#out+1]=input[i] end return out end
-local function statusKey(v) local s = string.upper(trim(v)); return s ~= '' and s or 'NEW' end
+local function normalizeCoords(input)
+    if type(input) ~= 'table' then return nil end
+    local x = tonumber(input.x or input[1])
+    local y = tonumber(input.y or input[2])
+    local z = tonumber(input.z or input[3]) or 0.0
+    if not x or not y or x ~= x or y ~= y or z ~= z then return nil end
+    if math.abs(x) > 20000 or math.abs(y) > 20000 or math.abs(z) > 20000 then return nil end
+    return { x = x + 0.0, y = y + 0.0, z = z + 0.0 }
+end
+local function trimBounded(value, maxLength)
+    local text = trim(value)
+    if #text > maxLength then return text:sub(1, maxLength) end
+    return text
+end
+local function isTrustedServerEvent()
+    local caller = tonumber(source)
+    return caller == nil or caller <= 0
+end
+local function isAuthorizedOfficer(sourceId)
+    local access = rawget(_G, 'CortexMdtAccess')
+    return type(access) == 'table'
+        and type(access.isOfficer) == 'function'
+        and access.isOfficer(sourceId) == true
+end
+local function shallow(input)
+    local out, count = {}, 0
+    if type(input) ~= 'table' then return out end
+
+    for k, v in pairs(input) do
+        if count >= 32 then break end
+        local key = trimBounded(k, 64)
+        if key ~= '' and (type(v) == 'string' or type(v) == 'number' or type(v) == 'boolean') then
+            out[key] = type(v) == 'string' and trimBounded(v, 256) or v
+            count = count + 1
+        end
+    end
+
+    return out
+end
+local function copyArray(input)
+    local out = {}
+    if type(input) ~= 'table' then return out end
+
+    for i = 1, math.min(#input, 64) do
+        local value = input[i]
+        if type(value) == 'table' then
+            out[#out + 1] = shallow(value)
+        elseif type(value) == 'string' then
+            out[#out + 1] = trimBounded(value, 256)
+        elseif type(value) == 'number' or type(value) == 'boolean' then
+            out[#out + 1] = value
+        end
+    end
+
+    return out
+end
+local function statusKey(v) local s = string.upper(trimBounded(v, 32)); return s ~= '' and s or 'NEW' end
 local function statusLabel(v) local s = statusKey(v); if s == 'ON_SCENE' then return 'On Scene' elseif s == 'CODE4' then return 'Code 4' elseif s == 'CANCELLED' then return 'Cancelled' elseif s == 'CLOSED' then return 'Closed' elseif s == 'ASSIGNED' then return 'Assigned' end return 'New' end
 local function resolved(v) local s = statusKey(v); return s == 'CODE4' or s == 'CLOSED' or s == 'CANCELLED' end
 local function severity(priority, status, icons) local p = clampPriority(priority); local s = statusKey(status); if s == 'CLOSED' or s == 'CANCELLED' then return 'Low' end if type(icons) == 'table' and icons.gun == true and p <= 2 then return 'Critical' end if p == 1 then return 'Critical' elseif p == 2 then return 'High' elseif p == 3 then return 'Medium' end return 'Low' end
@@ -274,6 +327,8 @@ lib.callback.register('cortex_mdt:attachDispatchCall', function(source, data)
 
     id = tostring(type(data) == 'table' and data.dispatchId or '')
     if id == '' or not activeCalls[id] then return { ok = false, error = 'Dispatch call not found.' } end
+    if not (resolveAuthoritativeUnit(source) or liveUnits[source]) then return { ok = false, error = 'You must be an active dispatch unit to attach.' } end
+    if attachments[id][source] then return { ok = true, dispatchId = id, alreadyAttached = true } end
     attachments[id][source] = true
     activeCalls[id].unitCount = (activeCalls[id].unitCount or 0) + 1
     refresh()
@@ -312,26 +367,39 @@ lib.callback.register('cortex_mdt:setWaypoint', function(source, data)
 end)
 lib.callback.register('cortex_mdt:triggerPanic', function(source, data)
     local now = os.time(); if now - (panicCooldowns[source] or 0) < panicCooldownSeconds then return { ok = false, error = 'Panic is on cooldown.' } end; panicCooldowns[source] = now
-    local payload = type(data) == 'table' and data or {}; local unit = resolveUnit(source) or liveUnits[source]; if not unit then return { ok = false, error = 'Must be on duty' } end; local coords = normalizeCoords(payload.coords) or normalizeCoords(unit.coords)
+    local payload = type(data) == 'table' and data or {}; local unit = resolveUnit(source) or liveUnits[source]; if not unit then return { ok = false, error = 'Must be on duty' } end; local ped = GetPlayerPed(source); local coords = (ped and ped > 0 and normalizeCoords(GetEntityCoords(ped)) or nil) or normalizeCoords(unit.coords); if not coords then return { ok = false, error = 'Unable to resolve officer coordinates.' } end
     if bridgeEnabled() then local created = bridgeCall('CreateCall', { code = '10-99', title = 'Officer Panic', priority = 1, sourceSystem = 'cortex_mdt', location = { street = trim(payload.street) ~= '' and trim(payload.street) or 'Unknown Street', area = trim(payload.postal), coords = coords }, icons = { gun = true, car = false, medical = false }, details = { ['Primary Unit'] = trim(unit.callsign) ~= '' and trim(unit.callsign) or tostring(source), Postal = trim(payload.postal), Caller = trim(unit.name) ~= '' and trim(unit.name) or (GetPlayerName(source) or 'Officer'), Plate = trim(payload.vehiclePlate), ['Vehicle Make'] = trim(payload.vehicleMake), ['Vehicle Model'] = trim(payload.vehicleModel) } }); local callId = created and tonumber(created.id) or resolveCallId(created); if not callId then return { ok = false, error = 'Failed to create panic call.' } end; bridgeCall('AttachUnit', callId, source); refresh(); TriggerClientEvent('cortex_mdtsv:dispatchUpdate', source, 'dispatch:selectCall', { dispatchId = 'ctx-' .. tostring(callId), bridgeCallId = callId }); auditDispatchAction(source, 'dispatch_panic', callId, { bridge = 'cortex-dispatch' }); return { ok = true, dispatchId = 'ctx-' .. tostring(callId), bridgeCallId = callId } end
     if psDispatchEnabled() then local psCfg = type(cfg.psDispatch) == 'table' and cfg.psDispatch or {}; notifyPsDispatch({ message = 'Officer Panic', codeName = trim(psCfg.panicCodeName) ~= '' and trim(psCfg.panicCodeName) or 'officerdown', code = trim(psCfg.panicCode) ~= '' and trim(psCfg.panicCode) or '10-99', icon = 'fas fa-triangle-exclamation', priority = 1, coords = coords, street = locationText(trim(payload.street), '', trim(payload.postal)), jobs = type(psCfg.jobs) == 'table' and psCfg.jobs or { 'leo' }, vehicle = trim(payload.vehicleModel), plate = trim(payload.vehiclePlate), color = trim(payload.vehicleColor), callsign = trim(unit.callsign), name = trim(unit.name) }) end
     local call = createLocalCall({ code = '10-99', title = 'Officer Panic', location = trim(payload.street) ~= '' and trim(payload.street) or 'Unknown Location', priority = 1, coords = coords, street = payload.street, postal = payload.postal, primaryCallsign = trim(unit.callsign) ~= '' and trim(unit.callsign) or tostring(source), vehiclePlate = payload.vehiclePlate, vehicleMake = payload.vehicleMake, vehicleModel = payload.vehicleModel, sourceSystem = 'local', callerSource = source, callerName = trim(unit.name) ~= '' and trim(unit.name) or (GetPlayerName(source) or 'Officer') }); attachments[call.id][source] = true; call.unitCount = 1; push('dispatch:panic', { dispatchId = call.id, source = source, callsign = call.primaryCallsign, coords = coords }); refresh(); TriggerClientEvent('cortex_mdtsv:dispatchUpdate', source, 'dispatch:selectCall', { dispatchId = call.id }); auditDispatchAction(source, 'dispatch_panic', call.id, { bridge = psDispatchEnabled() and 'ps-dispatch' or 'local' }); return { ok = true, dispatchId = call.id }
 end)
 lib.callback.register('cortex_mdt:createTrafficStopCall', function(source, data)
-    local payload = type(data) == 'table' and data or {}; local unit = resolveUnit(source) or liveUnits[source]; if not unit then return { ok = false, error = 'Must be on duty' } end; local coords = normalizeCoords(payload.coords) or normalizeCoords(unit.coords)
+    local now = GetGameTimer()
+    if now - (trafficStopCooldowns[source] or 0) < 5000 then return { ok = false, error = 'Traffic stop creation is on cooldown.' } end
+    trafficStopCooldowns[source] = now
+    local payload = type(data) == 'table' and data or {}; local unit = resolveUnit(source) or liveUnits[source]; if not unit then return { ok = false, error = 'Must be on duty' } end; local ped = GetPlayerPed(source); local coords = (ped and ped > 0 and normalizeCoords(GetEntityCoords(ped)) or nil) or normalizeCoords(unit.coords); if not coords then return { ok = false, error = 'Unable to resolve officer coordinates.' } end
     if bridgeEnabled() then local created = bridgeCall('CreateCall', { code = '10-11', title = 'Traffic Stop', priority = 3, sourceSystem = 'cortex_mdt', location = { street = trim(payload.street) ~= '' and trim(payload.street) or 'Unknown Street', area = trim(payload.postal), coords = coords }, icons = { gun = false, car = true, medical = false }, details = { ['Primary Unit'] = trim(unit.callsign) ~= '' and trim(unit.callsign) or tostring(source), Postal = trim(payload.postal), Plate = trim(payload.vehiclePlate), ['Vehicle Make'] = trim(payload.vehicleMake), ['Vehicle Model'] = trim(payload.vehicleModel), Caller = trim(unit.name) ~= '' and trim(unit.name) or (GetPlayerName(source) or 'Officer') } }); local callId = created and tonumber(created.id) or resolveCallId(created); if not callId then return { ok = false, error = 'Failed to create traffic stop.' } end; bridgeCall('AttachUnit', callId, source); refresh(); auditDispatchAction(source, 'dispatch_traffic_stop_create', callId, { bridge = 'cortex-dispatch', plate = trim(payload.vehiclePlate) }); return { ok = true, dispatchId = 'ctx-' .. tostring(callId), bridgeCallId = callId } end
     if psDispatchEnabled() then local psCfg = type(cfg.psDispatch) == 'table' and cfg.psDispatch or {}; notifyPsDispatch({ message = 'Traffic Stop', codeName = trim(psCfg.trafficStopCodeName) ~= '' and trim(psCfg.trafficStopCodeName) or 'trafficstop', code = trim(psCfg.trafficStopCode) ~= '' and trim(psCfg.trafficStopCode) or '10-11', icon = 'fas fa-car', priority = 2, coords = coords, street = locationText(trim(payload.street), '', trim(payload.postal)), jobs = type(psCfg.jobs) == 'table' and psCfg.jobs or { 'leo' }, vehicle = trim(payload.vehicleModel), plate = trim(payload.vehiclePlate), color = trim(payload.vehicleColor), callsign = trim(unit.callsign), name = trim(unit.name) }) end
     local call = createLocalCall({ code = '10-11', title = 'Traffic Stop', location = trim(payload.street) ~= '' and trim(payload.street) or 'Unknown Location', priority = 3, coords = coords, street = payload.street, postal = payload.postal, primaryCallsign = trim(unit.callsign) ~= '' and trim(unit.callsign) or tostring(source), vehiclePlate = payload.vehiclePlate, vehicleMake = payload.vehicleMake, vehicleModel = payload.vehicleModel, sourceSystem = 'local', callerSource = source, callerName = trim(unit.name) ~= '' and trim(unit.name) or (GetPlayerName(source) or 'Officer') }); attachments[call.id][source] = true; call.unitCount = 1; refresh(); auditDispatchAction(source, 'dispatch_traffic_stop_create', call.id, { bridge = psDispatchEnabled() and 'ps-dispatch' or 'local', plate = trim(payload.vehiclePlate) }); return { ok = true, dispatchId = call.id }
 end)
-lib.callback.register('cortex_mdt:updateDispatchCall', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; local patch = {}; if type(data) == 'table' then if trim(data.title) ~= '' then patch.title = trim(data.title) end; if data.priority ~= nil then patch.priority = clampPriority(data.priority) end; if type(data.details) == 'table' then patch.details = shallow(data.details) end; if trim(data.status) ~= '' then patch.status = statusKey(data.status) end end; if next(patch) == nil then return { ok = false, error = 'Nothing to update.' } end; if bridgeCall('UpdateCall', id, patch) then refresh(); auditDispatchAction(source, 'dispatch_update', id, patch); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to update dispatch call.' } end)
-lib.callback.register('cortex_mdt:closeDispatchCall', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; local reason = trim(type(data) == 'table' and data.reason or '') ~= '' and trim(data.reason) or 'Closed from MDT'; if bridgeCall('CloseCall', id, reason) then refresh(); auditDispatchAction(source, 'dispatch_close', id, { reason = reason }); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to close dispatch call.' } end)
-lib.callback.register('cortex_mdt:addDispatchNote', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local text = trim(type(data) == 'table' and data.text or ''); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; if text == '' then return { ok = false, error = 'Invalid note payload.' } end; if bridgeCall('AddNote', id, text) then refresh(); auditDispatchAction(source, 'dispatch_note_add', id, nil); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to add dispatch note.' } end)
+lib.callback.register('cortex_mdt:updateDispatchCall', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; local patch = {}; if type(data) == 'table' then if trim(data.title) ~= '' then patch.title = trimBounded(data.title, 160) end; if data.priority ~= nil then patch.priority = clampPriority(data.priority) end; if type(data.details) == 'table' then patch.details = shallow(data.details) end; if trim(data.status) ~= '' then patch.status = statusKey(data.status) end end; if next(patch) == nil then return { ok = false, error = 'Nothing to update.' } end; if bridgeCall('UpdateCall', id, patch) then refresh(); auditDispatchAction(source, 'dispatch_update', id, patch); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to update dispatch call.' } end)
+lib.callback.register('cortex_mdt:closeDispatchCall', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; local reason = trimBounded(type(data) == 'table' and data.reason or '', 256); if reason == '' then reason = 'Closed from MDT' end; if bridgeCall('CloseCall', id, reason) then refresh(); auditDispatchAction(source, 'dispatch_close', id, { reason = reason }); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to close dispatch call.' } end)
+lib.callback.register('cortex_mdt:addDispatchNote', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local text = trimBounded(type(data) == 'table' and data.text or '', 1000); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; if text == '' then return { ok = false, error = 'Invalid note payload.' } end; if bridgeCall('AddNote', id, text) then refresh(); auditDispatchAction(source, 'dispatch_note_add', id, nil); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to add dispatch note.' } end)
 lib.callback.register('cortex_mdt:markDispatchCode4', function(source, data) if not bridgeEnabled() then return { ok = false, error = 'Bridge not available.' } end local id = resolveCallId(data); local call = bridgeCallById(id); if not call then return { ok = false, error = 'Dispatch call not found.' } end; if call.externalLifecycle == true then return { ok = false, error = 'This call is managed externally and is read-only.' } end; if bridgeCall('MarkCode4', id) then refresh(); auditDispatchAction(source, 'dispatch_code4', id, nil); return { ok = true, dispatchId = 'ctx-' .. tostring(id), bridgeCallId = id } end return { ok = false, error = 'Failed to mark call Code 4.' } end)
 lib.callback.register('cortex_mdt:subscribeDispatch', function(source) subscribers[source] = true; refresh(); return { ok = true } end)
 lib.callback.register('cortex_mdt:unsubscribeDispatch', function(source) subscribers[source] = nil; return { ok = true } end)
 RegisterNetEvent('cortex_mdtsv:updateUnitCoords', function(coords, callsign, name, department, street, mapArea)
-    local normalized = normalizeCoords(coords)
-    if not normalized then return end
+    local sourceId = source
+    if not isAuthorizedOfficer(sourceId) then
+        liveUnits[sourceId] = nil
+        return
+    end
+
+    local now = GetGameTimer()
+    local lastUpdate = lastUnitUpdates[sourceId]
+    if lastUpdate and now >= lastUpdate and now - lastUpdate < math.max(500, math.floor(unitUpdateIntervalMs / 2)) then
+        return
+    end
+    lastUnitUpdates[sourceId] = now
 
     local rosterBridge = getRosterBridge()
     if rosterBridge and type(rosterBridge.isSourceOnDuty) == 'function' then
@@ -342,14 +410,21 @@ RegisterNetEvent('cortex_mdtsv:updateUnitCoords', function(coords, callsign, nam
         end
     end
 
-    liveUnits[source] = {
-        source = source,
+    local ped = GetPlayerPed(sourceId)
+    local normalized = ped and ped > 0 and normalizeCoords(GetEntityCoords(ped)) or nil
+    if not normalized then return end
+
+    local authoritative = resolveAuthoritativeUnit(sourceId) or {}
+
+    liveUnits[sourceId] = {
+        source = sourceId,
         coords = normalized,
-        callsign = trim(callsign) ~= '' and trim(callsign) or tostring(source),
-        name = trim(name) ~= '' and trim(name) or (GetPlayerName(source) or 'Unknown'),
-        department = trim(department) ~= '' and trim(department) or 'police',
-        street = trim(street),
-        mapArea = trim(mapArea),
+        heading = GetEntityHeading(ped) or 0.0,
+        callsign = trim(authoritative.callsign) ~= '' and trim(authoritative.callsign) or tostring(sourceId),
+        name = trim(authoritative.name) ~= '' and trim(authoritative.name) or (GetPlayerName(sourceId) or 'Unknown'),
+        department = trim(authoritative.department or authoritative.role) ~= '' and trim(authoritative.department or authoritative.role) or 'police',
+        street = trimBounded(street, 96),
+        mapArea = trimBounded(mapArea, 96),
         updatedAt = os.time(),
     }
 end)
@@ -370,14 +445,14 @@ function CortexMdtMergeLiveUnitTelemetry(unit)
     unit.locationStreet = trim(live.street)
     unit.mapArea = trim(live.mapArea)
 end
-AddEventHandler('playerDropped', function() liveUnits[source] = nil; subscribers[source] = nil; panicCooldowns[source] = nil end)
+AddEventHandler('playerDropped', function() liveUnits[source] = nil; subscribers[source] = nil; panicCooldowns[source] = nil; trafficStopCooldowns[source] = nil; lastUnitUpdates[source] = nil end)
 CreateThread(function() if not enabled then return end while true do Wait(unitUpdateIntervalMs) if next(subscribers) then if bridgeEnabled() then local data = snapshot(); local signature = encode(data); if signature ~= lastBridgeSignature then lastBridgeSignature = signature; refresh(data) end else push('units', snapshot().units) end end end end)
-RegisterNetEvent('cortex_mdt:server:addDispatchCall', function() if bridgeEnabled() then refresh() end end)
-RegisterNetEvent('cortex-dispatch:server:callCreated', function(call) if bridgeEnabled() then refresh() return end if type(call) ~= 'table' then return end createLocalCall({ code = trim(call.code), title = trim(call.title), location = locationText(call.location and call.location.street, call.location and call.location.cross, call.location and call.location.area), priority = clampPriority(call.priority), coords = call.location and call.location.coords or call.coords, street = call.location and call.location.street, postal = detailValue(call.details, { 'Postal', 'postal' }), sourceSystem = trim(call.sourceSystem), status = call.status }) refresh() end)
-RegisterNetEvent('cortex-dispatch:server:callUpdated', function() if bridgeEnabled() then refresh() end end)
-RegisterNetEvent('cortex-dispatch:server:ersCallCreated', function() if bridgeEnabled() then refresh() end end)
-RegisterNetEvent('night_ers:server:calloutCreated', function(calloutData) if bridgeEnabled() then refresh() return end if type(calloutData) ~= 'table' then return end createLocalCall({ code = trim(calloutData.Code) ~= '' and trim(calloutData.Code) or '10-00', title = trim(calloutData.CalloutName or calloutData.CalloutType or calloutData.title), location = locationText(calloutData.StreetName or calloutData.street, nil, calloutData.Postal or calloutData.PostalCode or calloutData.postal), priority = tonumber(calloutData.Priority) or 2, coords = calloutData.Coordinates or calloutData.coords, street = calloutData.StreetName or calloutData.street, postal = calloutData.Postal or calloutData.PostalCode or calloutData.postal, sourceSystem = 'ers', status = 'NEW', externalLifecycle = allowExternalLifecycleReadOnly, mutationsAllowed = not allowExternalLifecycleReadOnly }) refresh() end)
-RegisterNetEvent('ps-dispatch:server:notify', function(callData) if not psDispatchEnabled() then return end ingestPsDispatchCall(callData) end)
-RegisterNetEvent('dispatch:server:notify', function(callData) if not psDispatchEnabled() then return end ingestPsDispatchCall(callData) end)
-RegisterNetEvent('EmergencyResponseSimulator:server:calloutCreated', function(calloutData) TriggerEvent('night_ers:server:calloutCreated', calloutData) end)
+RegisterNetEvent('cortex_mdt:server:addDispatchCall', function() if not isTrustedServerEvent() then return end if bridgeEnabled() then refresh() end end)
+RegisterNetEvent('cortex-dispatch:server:callCreated', function(call) if not isTrustedServerEvent() then return end if bridgeEnabled() then refresh() return end if type(call) ~= 'table' then return end createLocalCall({ code = trim(call.code), title = trim(call.title), location = locationText(call.location and call.location.street, call.location and call.location.cross, call.location and call.location.area), priority = clampPriority(call.priority), coords = call.location and call.location.coords or call.coords, street = call.location and call.location.street, postal = detailValue(call.details, { 'Postal', 'postal' }), sourceSystem = trim(call.sourceSystem), status = call.status }) refresh() end)
+RegisterNetEvent('cortex-dispatch:server:callUpdated', function() if not isTrustedServerEvent() then return end if bridgeEnabled() then refresh() end end)
+RegisterNetEvent('cortex-dispatch:server:ersCallCreated', function() if not isTrustedServerEvent() then return end if bridgeEnabled() then refresh() end end)
+RegisterNetEvent('night_ers:server:calloutCreated', function(calloutData) if not isTrustedServerEvent() then return end if bridgeEnabled() then refresh() return end if type(calloutData) ~= 'table' then return end createLocalCall({ code = trim(calloutData.Code) ~= '' and trim(calloutData.Code) or '10-00', title = trim(calloutData.CalloutName or calloutData.CalloutType or calloutData.title), location = locationText(calloutData.StreetName or calloutData.street, nil, calloutData.Postal or calloutData.PostalCode or calloutData.postal), priority = tonumber(calloutData.Priority) or 2, coords = calloutData.Coordinates or calloutData.coords, street = calloutData.StreetName or calloutData.street, postal = calloutData.Postal or calloutData.PostalCode or calloutData.postal, sourceSystem = 'ers', status = 'NEW', externalLifecycle = allowExternalLifecycleReadOnly, mutationsAllowed = not allowExternalLifecycleReadOnly }) refresh() end)
+RegisterNetEvent('ps-dispatch:server:notify', function(callData) if not isTrustedServerEvent() or not psDispatchEnabled() then return end ingestPsDispatchCall(callData) end)
+RegisterNetEvent('dispatch:server:notify', function(callData) if not isTrustedServerEvent() or not psDispatchEnabled() then return end ingestPsDispatchCall(callData) end)
+RegisterNetEvent('EmergencyResponseSimulator:server:calloutCreated', function(calloutData) if not isTrustedServerEvent() then return end TriggerEvent('night_ers:server:calloutCreated', calloutData) end)
 if enabled then print('[^2cortex_mdt^0] Dispatch module loaded') end

@@ -983,8 +983,8 @@
                       <div class="edit-form">
                         <div class="edit-grid">
                           <div class="edit-field">
-                            <label class="field-label">Rank</label>
-                            <select class="field-select" bind:value={editRank}>
+                            <label class="field-label" for="officer-edit-rank">Rank</label>
+                            <select id="officer-edit-rank" class="field-select" bind:value={editRank}>
                               <option value="">Select rank</option>
                               {#each ranksForDept(editDepartment) as rank}
                                 <option value={rank}>{rank}</option>
@@ -995,12 +995,12 @@
                             </select>
                           </div>
                           <div class="edit-field">
-                            <label class="field-label">Callsign</label>
-                            <input type="text" class="field-input" bind:value={editCallsign} placeholder="e.g. 1-A-12" />
+                            <label class="field-label" for="officer-edit-callsign">Callsign</label>
+                            <input id="officer-edit-callsign" type="text" class="field-input" bind:value={editCallsign} placeholder="e.g. 1-A-12" />
                           </div>
                           <div class="edit-field">
-                            <label class="field-label">Department</label>
-                            <select class="field-select" bind:value={editDepartment}>
+                            <label class="field-label" for="officer-edit-department">Department</label>
+                            <select id="officer-edit-department" class="field-select" bind:value={editDepartment}>
                               <option value="">Select department</option>
                               {#each departments as dept}
                                 <option value={dept}>{dept}</option>
@@ -1011,8 +1011,8 @@
                             </select>
                           </div>
                           <div class="edit-field">
-                            <label class="field-label">Status</label>
-                            <select class="field-select" bind:value={editStatus}>
+                            <label class="field-label" for="officer-edit-status">Status</label>
+                            <select id="officer-edit-status" class="field-select" bind:value={editStatus}>
                               {#each STATUS_OPTIONS as s}
                                 <option value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
                               {/each}
@@ -1020,8 +1020,8 @@
                           </div>
                         </div>
                         <div class="edit-field wide">
-                          <label class="field-label">Certifications</label>
-                          <div class="cert-checks">
+                          <span class="field-label" id="officer-edit-certifications-label">Certifications</span>
+                          <div class="cert-checks" role="group" aria-labelledby="officer-edit-certifications-label">
                             {#each certifications as cert}
                               <MdtCheckbox
                                 class="cert-check"
@@ -1078,12 +1078,12 @@
           <div class="ann-form">
             <div class="ann-row">
               <div class="ann-field grow">
-                <label class="field-label">Title</label>
-                <input type="text" class="field-input" bind:value={annTitle} placeholder="Announcement title" />
+                <label class="field-label" for="announcement-title">Title</label>
+                <input id="announcement-title" type="text" class="field-input" bind:value={annTitle} placeholder="Announcement title" />
               </div>
               <div class="ann-field">
-                <label class="field-label">Department</label>
-                <select class="field-select" bind:value={annDepartment}>
+                <label class="field-label" for="announcement-department">Department</label>
+                <select id="announcement-department" class="field-select" bind:value={annDepartment}>
                   <option value="">All Departments</option>
                   {#each departments as dept}
                     <option value={dept}>{dept}</option>
@@ -1092,8 +1092,8 @@
               </div>
             </div>
             <div class="ann-field">
-              <label class="field-label">Content</label>
-              <textarea class="field-textarea" bind:value={annContent} placeholder="Write announcement content..." rows="4"></textarea>
+              <label class="field-label" for="announcement-content">Content</label>
+              <textarea id="announcement-content" class="field-textarea" bind:value={annContent} placeholder="Write announcement content..." rows="4"></textarea>
             </div>
             <div class="ann-footer">
               <MdtCheckbox class="pin-toggle" bind:checked={annPinned}>
@@ -1173,7 +1173,7 @@
           <div class="sys-fields">
             <div class="sys-field">
               <div class="sys-field-header">
-                <label class="field-label">Toolbar line / quotes</label>
+                <label class="field-label" for="setting-motd">Toolbar line / quotes</label>
                 <button
                   class="btn-save-sm"
                   onclick={() => saveSetting('motd')}
@@ -1188,6 +1188,7 @@
                 </button>
               </div>
               <textarea
+                id="setting-motd"
                 class="field-textarea"
                 bind:value={localSettings.motd}
                 placeholder="One line = one word or quote. Multiple lines = random line every ~45s in the toolbar center."
@@ -1198,7 +1199,7 @@
             <div class="sys-row">
               <div class="sys-field">
                 <div class="sys-field-header">
-                  <label class="field-label">Report Prefix</label>
+                  <label class="field-label" for="setting-report-prefix">Report Prefix</label>
                   <button
                     class="btn-save-sm"
                     onclick={() => saveSetting('report_prefix')}
@@ -1213,6 +1214,7 @@
                   </button>
                 </div>
                 <input
+                  id="setting-report-prefix"
                   type="text"
                   class="field-input mono"
                   bind:value={localSettings.report_prefix}
@@ -1222,7 +1224,7 @@
 
               <div class="sys-field">
                 <div class="sys-field-header">
-                  <label class="field-label">Case Prefix</label>
+                  <label class="field-label" for="setting-case-prefix">Case Prefix</label>
                   <button
                     class="btn-save-sm"
                     onclick={() => saveSetting('case_prefix')}
@@ -1237,6 +1239,7 @@
                   </button>
                 </div>
                 <input
+                  id="setting-case-prefix"
                   type="text"
                   class="field-input mono"
                   bind:value={localSettings.case_prefix}
@@ -1246,7 +1249,7 @@
 
               <div class="sys-field">
                 <div class="sys-field-header">
-                  <label class="field-label">Evidence Prefix</label>
+                  <label class="field-label" for="setting-evidence-prefix">Evidence Prefix</label>
                   <button
                     class="btn-save-sm"
                     onclick={() => saveSetting('evidence_prefix')}
@@ -1261,6 +1264,7 @@
                   </button>
                 </div>
                 <input
+                  id="setting-evidence-prefix"
                   type="text"
                   class="field-input mono"
                   bind:value={localSettings.evidence_prefix}
