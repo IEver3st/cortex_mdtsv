@@ -38,6 +38,7 @@ server_scripts {
     'server/framework/standalone/provider.lua',
     'server/framework/ers/provider.lua',
     'server/framework/common.lua',
+    'server/integrations/polcam.lua',
     'server/pages/index.lua',
     'server/localStorage.lua',
     'server/citations.lua',
