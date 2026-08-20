@@ -107,11 +107,14 @@ local function airFeedCrewIsOnDuty(feed)
     end
 
     local pilotSource = tonumber(feed.pilotSource)
-    if config.requirePilotOnDuty ~= false
-        and pilotSource and pilotSource > 0
-        and pilotSource ~= operatorSource
-        and not officerIsOnDuty(pilotSource) then
-        return false
+    if config.requirePilotOnDuty ~= false then
+        if not pilotSource or pilotSource <= 0 then
+            return false
+        end
+
+        if not officerIsOnDuty(pilotSource) then
+            return false
+        end
     end
 
     return true
