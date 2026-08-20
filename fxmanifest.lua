@@ -42,6 +42,7 @@ server_scripts {
     'server/localStorage.lua',
     'server/citations.lua',
     'server/data.lua',
+    'server/parity.lua',
     'server/ers.lua',
     'server/cameras.lua',
     'server/dispatch.lua',

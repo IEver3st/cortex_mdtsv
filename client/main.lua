@@ -3,6 +3,7 @@ local isOpen = false
 CortexMdtNuiOpen = false
 local currentMode = 'pd'
 local mdtEmoteResourceUsed = nil
+local complaintVisible = false
 
 local function getMdtEmoteConfig()
     if Config.MDTTabletEmote == false then
@@ -256,6 +257,8 @@ local function runPoliceDutyCommand(args)
     ))
 end
 
+local closeMDT
+
 local function openMDT()
     if isOpen then return end
     local officer, accessError = getOfficerProfile()
@@ -299,8 +302,39 @@ local function openCivilian()
     mdtEmoteStart()
 end
 
-local function closeMDT()
+local function openComplaint()
+    if complaintVisible then return end
+    complaintVisible = true
+    SendNUIMessage({
+        action = 'cortex_mdt:showComplaint',
+        data = {
+            reporterName = GetPlayerName(PlayerId()) or '',
+        },
+    })
+    SetNuiFocus(true, true)
+end
+
+local function openStandaloneComplaint()
+    if isOpen then
+        if currentMode == 'complaint' then return end
+        closeMDT()
+    end
+
+    isOpen = true
+    CortexMdtNuiOpen = true
+    currentMode = 'complaint'
+    openComplaint()
+end
+
+local function closeComplaint()
+    if not complaintVisible then return end
+    complaintVisible = false
+    SendNUIMessage({ action = 'cortex_mdt:hideComplaint' })
+end
+
+closeMDT = function()
     if not isOpen then return end
+    closeComplaint()
     isOpen = false
     CortexMdtNuiOpen = false
     currentMode = 'pd'
@@ -330,6 +364,18 @@ end)
 RegisterNUICallback('cortex_mdt:close', function(_, cb)
     closeMDT()
     cb('ok')
+end)
+
+RegisterNUICallback('cortex_mdt:openComplaint', function(_, cb)
+    openComplaint()
+    cb({ ok = true })
+end)
+
+RegisterNUICallback('cortex_mdt:closeComplaint', function(_, cb)
+    local standalone = currentMode == 'complaint'
+    closeComplaint()
+    if standalone then closeMDT() end
+    cb({ ok = true })
 end)
 
 RegisterNUICallback('cortex_mdt:closeCitation', function(_, cb)
@@ -523,6 +569,13 @@ local serverForwardCallbacks = {
     'cortex_mdt:getMyCitations',
     'cortex_mdt:getCitation',
     'cortex_mdt:markCitationViewed',
+    'cortex_mdt:getFeatureRecords',
+    'cortex_mdt:createFeatureRecord',
+    'cortex_mdt:updateFeatureRecord',
+    'cortex_mdt:deleteFeatureRecord',
+    'cortex_mdt:acknowledgeSop',
+    'cortex_mdt:getSopAcknowledgements',
+    'cortex_mdt:submitPublicComplaint',
 }
 
 for i = 1, #serverForwardCallbacks do
@@ -555,6 +608,24 @@ RegisterCommand(Config.PoliceCommand or Config.policeCommand or 'police', functi
     runPoliceDutyCommand(args)
 end, false)
 
+local complaintConfig = type(Config.FeatureParity) == 'table' and Config.FeatureParity or {}
+local complaintFeatures = type(complaintConfig.features) == 'table' and complaintConfig.features or {}
+local complaintCommand = trimText(complaintConfig.publicComplaintCommand)
+if complaintConfig.enabled ~= false and complaintFeatures.ia ~= false and complaintCommand ~= '' then
+    RegisterCommand(complaintCommand, function()
+        if isOpen and currentMode == 'complaint' then
+            closeMDT()
+        else
+            openStandaloneComplaint()
+        end
+    end, false)
+    TriggerEvent('chat:addSuggestion', '/' .. complaintCommand, 'File an Internal Affairs complaint')
+end
+
+exports('openComplaint', function()
+    openStandaloneComplaint()
+end)
+
 if Config.Citations and Config.Citations.enabled ~= false then
     RegisterCommand(Config.Citations.showCommand or 'showcitation', function()
         if isOpen then
@@ -581,5 +652,7 @@ AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then
         return
     end
+    closeComplaint()
     mdtEmoteStop()
+    SetNuiFocus(false, false)
 end)

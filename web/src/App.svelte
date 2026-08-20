@@ -1,5 +1,5 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { cubicOut } from 'svelte/easing';
   import { fade } from 'svelte/transition';
   import { mdtStore } from './lib/stores/mdt.svelte.js';
@@ -36,6 +36,7 @@
   import Charges from './pages/Charges.svelte';
   import FTO from './pages/FTO.svelte';
   import SOPs from './pages/SOPs.svelte';
+  import Command from './pages/Command.svelte';
   import Placeholder from './pages/Placeholder.svelte';
 
   import CivilianLogin from './pages/CivilianLogin.svelte';
@@ -47,6 +48,7 @@
   import CivilianSidebar from './lib/components/CivilianSidebar.svelte';
   import CivilianToolbar from './lib/components/CivilianToolbar.svelte';
   import CitationView from './lib/components/CitationView.svelte';
+  import ComplaintForm from './lib/components/ComplaintForm.svelte';
 
   let visible = $derived(mdtStore.visible);
   let peeking = $derived(mdtStore.peeking);
@@ -59,6 +61,18 @@
   let cctvFeedActive = $derived(tabActivePage === 'cctv' && !!dataStore.activeCameraFeed);
   let bodycamFeedActive = $derived(tabActivePage === 'bodycams' && !!dataStore.activeBodycamFeed);
   let cameraFeedActive = $derived(cctvFeedActive || bodycamFeedActive);
+  let complaintOpen = $state(false);
+  let complaintDefaults = $state({ reporterName: '' });
+  let complaintReturnFocus = null;
+
+  async function closeComplaintUi() {
+    if (!complaintOpen) return;
+    const returnFocus = complaintReturnFocus;
+    complaintOpen = false;
+    complaintReturnFocus = null;
+    await tick();
+    if (returnFocus?.isConnected) returnFocus.focus?.();
+  }
 
   const CIV_PAGE_LABELS = {
     'civ-dashboard': 'Dashboard',
@@ -231,6 +245,28 @@
       'cortex_mdt:bodycamLocation': (data) => {
         dataStore.bodycamLiveLocation = typeof data?.location === 'string' ? data.location : '';
       },
+      'cortex_mdt:cameraFeedState': (data) => {
+        dataStore.cameraFeedState = data || { state: 'idle' };
+        if (data?.state === 'disconnected') {
+          dataStore.activeBodycamFeed = null;
+        }
+      },
+      'cortex_mdt:bodycamAvailability': (data) => {
+        dataStore.cameraFeedState = {
+          availabilityEnabled: data?.enabled === true,
+          availabilityMessage: typeof data?.message === 'string' ? data.message : '',
+        };
+      },
+      'cortex_mdt:showComplaint': (data) => {
+        if (!complaintOpen) complaintReturnFocus = document.activeElement;
+        complaintDefaults = {
+          reporterName: typeof data?.reporterName === 'string' ? data.reporterName : '',
+        };
+        complaintOpen = true;
+      },
+      'cortex_mdt:hideComplaint': () => {
+        void closeComplaintUi();
+      },
       'cortex_mdt:showCitation': (data) => {
         mdtStore.showCitation = true;
         if (data?.playerName && !data?.id) {
@@ -248,6 +284,12 @@
 
     function handleKeydown(e) {
       if (!mdtStore.visible) return;
+      if (complaintOpen) return;
+      if (e.defaultPrevented) return;
+
+      // Page-level dialogs own Escape first. The dialog may unmount during the
+      // same key event, so honour both its current presence and preventDefault.
+      if (e.key === 'Escape' && document.querySelector('[role="dialog"][aria-modal="true"]')) return;
 
       if (e.key === 'Escape') {
         if (dataStore.activeCameraFeed && tabsStore.activePage === 'cctv') {
@@ -424,6 +466,8 @@
                   <FTO />
                 {:else if tabActivePage === 'sops'}
                   <SOPs />
+                {:else if tabActivePage === 'command'}
+                  <Command />
                 {:else if tabActivePage === 'settings'}
                   <Settings />
                 {:else}
@@ -442,6 +486,8 @@
 {#if mdtStore.showCitation}
   <CitationView />
 {/if}
+
+<ComplaintForm show={complaintOpen} defaults={complaintDefaults} onClose={closeComplaintUi} />
 
 <style>
   .mdt-root {

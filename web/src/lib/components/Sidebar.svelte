@@ -23,6 +23,7 @@
     Scale,
     GraduationCap,
     BookOpen,
+    Landmark,
   } from '@lucide/svelte';
   import { mdtStore } from '../stores/mdt.svelte.js';
   import { tabsStore } from '../stores/tabs.svelte.js';
@@ -76,6 +77,7 @@
         { id: 'charges',   label: 'Charges',   icon: Scale },
         { id: 'fto',       label: 'FTO',       icon: GraduationCap },
         { id: 'sops',      label: 'SOPs',      icon: BookOpen },
+        { id: 'command',   label: 'Command',   icon: Landmark },
       ],
     },
   ];

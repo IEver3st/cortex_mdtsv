@@ -18,6 +18,7 @@ import {
   Scale,
   GraduationCap,
   BookOpen,
+  Landmark,
 } from '@lucide/svelte';
 
 const PAGE_META = {
@@ -39,6 +40,7 @@ const PAGE_META = {
   charges:    { label: 'Charges',    icon: Scale,         pinnable: false },
   fto:        { label: 'FTO',        icon: GraduationCap, pinnable: false },
   sops:       { label: 'SOPs',       icon: BookOpen,      pinnable: false },
+  command:    { label: 'Command',    icon: Landmark,      pinnable: false },
   settings:   { label: 'Settings',   icon: Settings,      pinnable: false },
 };
 

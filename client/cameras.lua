@@ -3,6 +3,11 @@ local activeView = nil
 --- Bodycam HUD: cortex-hud toggleHud only (toggleMap duplicates minimap refresh + races bigmap collapse).
 local bodycamHudSuppressed = false
 local bodycamHudUsedEsExport = false
+local bodycamStreamDemanded = false
+local bodycamViewerCount = 0
+local activeAudioSource = nil
+local savedVisionState = nil
+local dashcamModelOffsetsByHash = nil
 
 --- Control indices allowed during bodycam (zoom/pan/tilt/reset + shift/ctrl modifiers). All other gameplay input blocked.
 local BODYCAM_ALLOWED_CONTROLS = { 21, 32, 33, 34, 35, 36, 38, 44, 45 }
@@ -118,18 +123,57 @@ local function pushBodycamLocation(locationText)
     })
 end
 
+local function pushFeedState(state, details)
+    details = type(details) == 'table' and details or {}
+    details.state = state
+    if activeView then
+        details.feedId = details.feedId or activeView.feedId
+        details.feedType = details.feedType or activeView.kind
+        details.direction = details.direction or activeView.direction
+    end
+    SendNUIMessage({ action = 'cortex_mdt:cameraFeedState', data = details })
+end
+
+local function restoreVisionState()
+    if not savedVisionState then return end
+    pcall(SetNightvision, savedVisionState.nightvision == true)
+    pcall(SetSeethrough, savedVisionState.seethrough == true)
+    savedVisionState = nil
+end
+
+local function setMirroredVisionMode(mode)
+    mode = tostring(mode or 'normal'):lower()
+    if mode == 'nightvision' then
+        pcall(SetNightvision, true)
+        pcall(SetSeethrough, false)
+    elseif mode == 'thermal' then
+        pcall(SetNightvision, false)
+        pcall(SetSeethrough, true)
+    else
+        pcall(SetNightvision, false)
+        pcall(SetSeethrough, false)
+    end
+end
+
+local function resetBodycamAudio()
+    if not activeAudioSource then return end
+    pcall(MumbleSetVolumeOverrideByServerId, activeAudioSource, -1.0)
+    activeAudioSource = nil
+end
+
 local function destroyScriptCamera()
     SetNuiFocusKeepInput(false)
     pushBodycamLocation('')
+    resetBodycamAudio()
+    restoreVisionState()
+    ClearFocus()
 
     restoreBodycamHud()
 
-    if not activeCamera then
-        return
+    if activeCamera then
+        RenderScriptCams(false, true, 250, true, true)
+        DestroyCam(activeCamera, false)
     end
-
-    RenderScriptCams(false, true, 250, true, true)
-    DestroyCam(activeCamera, false)
     activeCamera = nil
     activeView = nil
 end
@@ -204,71 +248,254 @@ local function formatStreetAtCoords(coords)
     return street
 end
 
-local function startBodycamTrackerThread()
+local function lerp(first, second, amount)
+    return first + ((second - first) * amount)
+end
+
+local function lerpAngle(first, second, amount)
+    local delta = ((second - first + 180.0) % 360.0) - 180.0
+    return first + (delta * amount)
+end
+
+local function parseVector(value, fallback)
+    value = type(value) == 'table' and value or {}
+    return {
+        x = tonumber(value.x or value[1]) or fallback.x,
+        y = tonumber(value.y or value[2]) or fallback.y,
+        z = tonumber(value.z or value[3]) or fallback.z,
+    }
+end
+
+local function getDashcamModelOffset(modelHash)
+    modelHash = tonumber(modelHash)
+    if not modelHash then return nil end
+
+    if not dashcamModelOffsetsByHash then
+        dashcamModelOffsetsByHash = {}
+        local config = type(Config.Dashcams) == 'table' and Config.Dashcams or {}
+        local configured = type(config.modelOffsets) == 'table' and config.modelOffsets or {}
+        for modelName, entry in pairs(configured) do
+            if type(entry) == 'table' then
+                local hash = tonumber(modelName)
+                if not hash and type(modelName) == 'string' and modelName ~= '' then
+                    hash = GetHashKey(modelName)
+                end
+                if hash then dashcamModelOffsetsByHash[hash] = entry end
+            end
+        end
+    end
+
+    return dashcamModelOffsetsByHash[modelHash]
+end
+
+local function resolveDashcamOffset(modelHash, direction)
+    local config = type(Config.Dashcams) == 'table' and Config.Dashcams or {}
+    local rear = direction == 'rear'
+    local fallbackValue = rear and config.defaultRearOffset or config.defaultOffset
+    local fallback = parseVector(fallbackValue, rear
+        and { x = 0.0, y = -0.82, z = 1.12 }
+        or { x = 0.0, y = 0.72, z = 1.18 })
+    local defaultPitch = tonumber(rear and config.defaultRearPitch or config.defaultPitch)
+        or (rear and -3.0 or -5.0)
+    local model = getDashcamModelOffset(modelHash)
+    if not model then return fallback, defaultPitch end
+
+    -- Native Cortex format: explicit local-space front/rear vectors where
+    -- x = right, y = forward, z = up. Missing axes inherit the defaults.
+    local selected = rear and (model.rear or model.rearOffset) or (model.front or model.frontOffset)
+    local pitch = selected and tonumber(selected.pitch)
+        or tonumber(rear and model.rearPitch or model.frontPitch)
+
+    -- Project Sloth compatible format, so existing per-vehicle tuning can be
+    -- copied without translating side/forward/height fields by hand.
+    if not selected and (model.side ~= nil or model.forward ~= nil or model.height ~= nil
+        or model.rearSide ~= nil or model.rearForward ~= nil or model.rearHeight ~= nil) then
+        if rear then
+            selected = {
+                x = model.rearSide ~= nil and model.rearSide or model.side,
+                y = -(tonumber(model.rearForward ~= nil and model.rearForward or model.forward) or math.abs(fallback.y)),
+                z = model.rearHeight ~= nil and model.rearHeight or model.height,
+            }
+            pitch = tonumber(model.rearPitch) or tonumber(model.pitch)
+        else
+            selected = { x = model.side, y = model.forward, z = model.height }
+            pitch = tonumber(model.pitch)
+        end
+    end
+
+    return parseVector(selected, fallback), clamp(pitch or defaultPitch, -45.0, 45.0)
+end
+
+local function frameTransform(frame, previous, amount)
+    local coords = parseVector(frame.coords, { x = 0.0, y = 0.0, z = 0.0 })
+    local rotation = parseVector(frame.rotation, { x = 0.0, y = 0.0, z = tonumber(frame.heading) or 0.0 })
+    if not previous then return coords, rotation end
+    local oldCoords = parseVector(previous.coords, coords)
+    local oldRotation = parseVector(previous.rotation, rotation)
+    return {
+        x = lerp(oldCoords.x, coords.x, amount),
+        y = lerp(oldCoords.y, coords.y, amount),
+        z = lerp(oldCoords.z, coords.z, amount),
+    }, {
+        x = lerpAngle(oldRotation.x, rotation.x, amount),
+        y = lerpAngle(oldRotation.y, rotation.y, amount),
+        z = lerpAngle(oldRotation.z, rotation.z, amount),
+    }
+end
+
+local function applyDashcamOffset(coords, heading, direction, modelHash)
+    local offset, pitch = resolveDashcamOffset(modelHash, direction)
+    local radians = math.rad(heading)
+    return {
+        x = coords.x + (offset.x * math.cos(radians)) + (offset.y * math.sin(radians)),
+        y = coords.y - (offset.x * math.sin(radians)) + (offset.y * math.cos(radians)),
+        z = coords.z + offset.z,
+    }, pitch
+end
+
+local function applyRemoteFrame(frame)
+    if type(frame) ~= 'table' or not activeView or not activeCamera or frame.feedId ~= activeView.feedId then return end
+    local normalized = frame
+    if activeView.kind == 'air' and frame.preview then
+        normalized = {
+            feedId = frame.feedId,
+            coords = frame.preview.coords,
+            rotation = frame.preview.rotation,
+            fov = frame.preview.fov,
+            visionMode = frame.preview.visionMode,
+            tracking = frame.tracking,
+        }
+    end
+    activeView.previousFrame = activeView.currentFrame
+    activeView.currentFrame = normalized
+    if activeView.kind == 'dashcam' then
+        activeView.modelHash = tonumber(frame.modelHash) or activeView.modelHash
+    end
+    activeView.frameReceivedAt = GetGameTimer()
+    activeView.frameState = 'live'
+    pushFeedState('live', {
+        speed = frame.speed,
+        fov = frame.preview and frame.preview.fov or frame.fov,
+        visionMode = frame.preview and frame.preview.visionMode or frame.visionMode,
+        tracking = frame.tracking,
+    })
+end
+
+local function startRemoteTrackerThread()
     CreateThread(function()
-        local locationTick = 0
-        while activeCamera and activeView and activeView.kind == 'bodycam' do
+        local locationAt = 0
+        local staleNotified = false
+        while activeCamera and activeView and activeView.kind ~= 'static' do
             bodycamInputGate()
-            local targetSource = activeView.targetSource
-            local playerIndex = GetPlayerFromServerId(targetSource)
+            local now = GetGameTimer()
+            local frame = activeView.currentFrame
+            if frame then
+                local syncInterval = activeView.kind == 'bodycam'
+                    and tonumber((Config.Bodycams or {}).streamIntervalMs)
+                    or (activeView.kind == 'air'
+                        and tonumber((Config.AirSupport or {}).syncIntervalMs)
+                        or tonumber((Config.Dashcams or {}).syncIntervalMs))
+                syncInterval = math.max(50, syncInterval or 200)
+                local amount = clamp((now - (activeView.frameReceivedAt or now)) / syncInterval, 0.0, 1.0)
+                local coords, rotation = frameTransform(frame, activeView.previousFrame, amount)
 
-            if playerIndex == -1 then
-                stopCameraView(true)
-                break
+                if activeView.kind == 'bodycam' then
+                    rotation.x = rotation.x + (activeView.pitch or 0.0)
+                    rotation.z = rotation.z + (activeView.headingOffset or 0.0)
+                elseif activeView.kind == 'dashcam' then
+                    local heading = tonumber(frame.heading) or rotation.z
+                    local pitch
+                    coords, pitch = applyDashcamOffset(coords, heading, activeView.direction, frame.modelHash or activeView.modelHash)
+                    rotation = { x = pitch, y = 0.0, z = heading + (activeView.direction == 'rear' and 180.0 or 0.0) }
+                elseif activeView.kind == 'air' then
+                    activeView.fov = tonumber(frame.fov) or activeView.fov
+                    setMirroredVisionMode(frame.visionMode)
+                end
+
+                SetCamCoord(activeCamera, coords.x, coords.y, coords.z)
+                SetCamRot(activeCamera, rotation.x, rotation.y, rotation.z, 2)
+                SetCamFov(activeCamera, activeView.fov)
+                SetFocusPosAndVel(coords.x, coords.y, coords.z, 0.0, 0.0, 0.0)
+                RequestCollisionAtCoord(coords.x, coords.y, coords.z)
+
+                if now - locationAt >= 500 then
+                    locationAt = now
+                    pushBodycamLocation(formatStreetAtCoords(coords))
+                end
+
+                local staleAfter = math.max(500, tonumber((Config.Bodycams or {}).staleFrameMs) or 2000)
+                if now - (activeView.frameReceivedAt or now) > staleAfter then
+                    if not staleNotified then
+                        staleNotified = true
+                        pushFeedState('stale', { detail = 'Waiting for the next authorised camera frame.' })
+                    end
+                else
+                    staleNotified = false
+                end
+            elseif not staleNotified and now - (activeView.startedAt or now) > 750 then
+                staleNotified = true
+                pushFeedState('connecting', { detail = 'Establishing the secure feed.' })
             end
-
-            local targetPed = GetPlayerPed(playerIndex)
-            if targetPed == 0 or not DoesEntityExist(targetPed) then
-                stopCameraView(true)
-                break
-            end
-
-            local headCoords = GetPedBoneCoords(targetPed, 31086, 0.04, 0.03, 0.01)
-            local heading = GetEntityHeading(targetPed)
-
-            SetCamCoord(activeCamera, headCoords.x, headCoords.y, headCoords.z)
-            SetCamRot(activeCamera, activeView.pitch, 0.0, heading + activeView.headingOffset, 2)
-            SetCamFov(activeCamera, activeView.fov)
-
-            locationTick = locationTick + 1
-            if locationTick >= 18 then
-                locationTick = 0
-                local pedCoords = GetEntityCoords(targetPed)
-                pushBodycamLocation(formatStreetAtCoords(pedCoords))
-            end
-
             Wait(0)
         end
     end)
 end
 
-local function startBodycamView(bodycam)
+local function startLiveFeedView(feed, direction)
     stopCameraView(false)
 
-    local targetSource = tonumber(bodycam.source)
-    if not targetSource then
-        return false
-    end
+    if type(feed) ~= 'table' or type(feed.feedId) ~= 'string' then return false end
+    local feedType = tostring(feed.feedType or '')
+    if feedType ~= 'bodycam' and feedType ~= 'dashcam' and feedType ~= 'air' then return false end
 
     activeCamera = CreateCam('DEFAULT_SCRIPTED_CAMERA', true)
     activeView = {
-        kind = 'bodycam',
-        targetSource = targetSource,
+        kind = feedType,
+        feedId = feed.feedId,
+        targetSource = tonumber(feed.source),
+        modelHash = tonumber(feed.modelHash),
+        direction = direction == 'rear' and 'rear' or 'front',
         headingOffset = 0.0,
-        pitch = -4.0,
+        pitch = 0.0,
         fov = getDefaultFov(),
+        startedAt = GetGameTimer(),
+        frameReceivedAt = nil,
     }
+
+    local playerCoords = GetEntityCoords(PlayerPedId())
+    SetCamCoord(activeCamera, playerCoords.x, playerCoords.y, playerCoords.z + 1.0)
+    SetCamRot(activeCamera, 0.0, 0.0, GetEntityHeading(PlayerPedId()), 2)
+
+    if feedType == 'air' and feed.preview then
+        savedVisionState = {
+            nightvision = GetUsingnightvision and GetUsingnightvision() or false,
+            seethrough = GetUsingseethrough and GetUsingseethrough() or false,
+        }
+        applyRemoteFrame(feed)
+    end
 
     SetCamActive(activeCamera, true)
     RenderScriptCams(true, true, 250, true, true)
     SetNuiFocusKeepInput(true)
     suppressBodycamHud()
-    startBodycamTrackerThread()
+    pushFeedState('connecting')
+    startRemoteTrackerThread()
     return true
+end
+
+local function startBodycamView(bodycam)
+    return startLiveFeedView(bodycam, 'front')
 end
 
 local function applyCameraControl(action)
     if not activeView or not activeCamera then
+        return
+    end
+
+    if activeView.kind == 'air' then return end
+    if action == 'toggle_direction' and activeView.kind == 'dashcam' then
+        activeView.direction = activeView.direction == 'rear' and 'front' or 'rear'
+        pushFeedState('live', { direction = activeView.direction })
         return
     end
 
@@ -285,7 +512,7 @@ local function applyCameraControl(action)
             activeView.rotation.x = -20.0
             activeView.rotation.y = 0.0
         else
-            activeView.pitch = -4.0
+            activeView.pitch = 0.0
             activeView.headingOffset = 0.0
         end
     elseif activeView.kind == 'static' then
@@ -399,6 +626,29 @@ RegisterNUICallback('cortex_mdt:getBodycams', function(_, cb)
     cb(response)
 end)
 
+RegisterNUICallback('cortex_mdt:getLiveFeeds', function(_, cb)
+    local response = awaitServerCallback('cortex_mdt:getLiveFeeds') or {
+        ok = false,
+        error = 'Failed to load operational camera feeds.',
+    }
+    cb(response)
+end)
+
+RegisterNUICallback('cortex_mdt:viewLiveFeed', function(data, cb)
+    local response = awaitServerCallback('cortex_mdt:viewLiveFeed', data) or {
+        ok = false,
+        error = 'Failed to open the live feed.',
+    }
+    if response.ok and response.feed then
+        local started = startLiveFeedView(response.feed, response.direction)
+        if not started then
+            awaitServerCallback('cortex_mdt:stopCameraView')
+            response = { ok = false, error = 'Unable to initialize the camera renderer.' }
+        end
+    end
+    cb(response)
+end)
+
 RegisterNUICallback('cortex_mdt:viewBodycam', function(data, cb)
     local response = awaitServerCallback('cortex_mdt:viewBodycam', data) or {
         ok = false,
@@ -432,12 +682,70 @@ RegisterNUICallback('cortex_mdt:cameraControl', function(data, cb)
     cb({ ok = true })
 end)
 
---- UI audio toggle (extend: route to voice resource).
-RegisterNUICallback('cortex_mdt:setBodycamAudio', function(_, cb)
-    cb({ ok = true })
+RegisterNUICallback('cortex_mdt:setBodycamAudio', function(data, cb)
+    local audioConfig = type(Config.Bodycams) == 'table' and type(Config.Bodycams.audio) == 'table'
+        and Config.Bodycams.audio or {}
+    if not activeView or activeView.kind ~= 'bodycam' or audioConfig.enabled ~= true or audioConfig.mode ~= 'proximity' then
+        cb({ ok = false, error = 'Bodycam audio is unavailable for this feed.', mode = 'disabled' })
+        return
+    end
+
+    local targetSource = tonumber(activeView.targetSource)
+    if not targetSource then
+        cb({ ok = false, error = 'Bodycam audio target is unavailable.', mode = 'disabled' })
+        return
+    end
+
+    local enabled = type(data) == 'table' and data.enabled == true
+    resetBodycamAudio()
+    if enabled then
+        local volume = clamp(tonumber(audioConfig.volume) or 1.0, 0.0, 1.0)
+        local ok = pcall(MumbleSetVolumeOverrideByServerId, targetSource, volume)
+        if not ok then
+            cb({ ok = false, error = 'Voice override is unavailable.', mode = 'disabled' })
+            return
+        end
+        activeAudioSource = targetSource
+    end
+    cb({
+        ok = true,
+        enabled = enabled,
+        mode = 'proximity',
+        detail = 'Only voice already routed by the server is audible; radio and call targets are unchanged.',
+    })
 end)
 
-RegisterNetEvent('cortex_mdtsv:cameraForceStop', function()
+RegisterNetEvent('cortex_mdtsv:bodycamFrame', function(frame)
+    applyRemoteFrame(frame)
+end)
+
+RegisterNetEvent('cortex_mdtsv:dashcamFrame', function(frame)
+    if type(frame) == 'table' then
+        frame.rotation = { x = 0.0, y = 0.0, z = tonumber(frame.heading) or 0.0 }
+    end
+    applyRemoteFrame(frame)
+end)
+
+RegisterNetEvent('cortex_mdtsv:airFeedFrame', function(frame)
+    applyRemoteFrame(frame)
+end)
+
+RegisterNetEvent('cortex_mdtsv:bodycamStreamDemand', function(required, viewerCount)
+    bodycamStreamDemanded = required == true
+    bodycamViewerCount = math.max(0, tonumber(viewerCount) or 0)
+end)
+
+RegisterNetEvent('cortex_mdtsv:bodycamAvailability', function(enabled, message)
+    SendNUIMessage({
+        action = 'cortex_mdt:bodycamAvailability',
+        data = { enabled = enabled == true, message = tostring(message or '') },
+    })
+end)
+
+RegisterNetEvent('cortex_mdtsv:cameraForceStop', function(reason)
+    if activeView then
+        pushFeedState('disconnected', { detail = tostring(reason or 'The feed is no longer available.') })
+    end
     stopCameraView(false)
 end)
 
@@ -450,7 +758,34 @@ AddEventHandler('onResourceStop', function(resourceName)
         return
     end
 
+    bodycamStreamDemanded = false
+    bodycamViewerCount = 0
     stopCameraView(false)
+end)
+
+CreateThread(function()
+    while true do
+        if bodycamStreamDemanded and (Config.Bodycams or {}).enabled ~= false then
+            local ped = PlayerPedId()
+            if ped ~= 0 and DoesEntityExist(ped) and not IsEntityDead(ped) then
+                local coords = GetPedBoneCoords(ped, 31086, 0.04, 0.08, -0.08)
+                local gameplayRotation = GetGameplayCamRot(2)
+                TriggerServerEvent('cortex_mdtsv:bodycamFrame', {
+                    coords = { x = coords.x, y = coords.y, z = coords.z },
+                    rotation = {
+                        x = gameplayRotation.x,
+                        y = gameplayRotation.y,
+                        z = gameplayRotation.z,
+                    },
+                    fov = GetGameplayCamFov(),
+                    speed = GetEntitySpeed(ped),
+                })
+            end
+            Wait(math.max(50, tonumber((Config.Bodycams or {}).streamIntervalMs) or 100))
+        else
+            Wait(500)
+        end
+    end
 end)
 
 --- Axis holds while NUI stays focused (SetNuiFocusKeepInput). Matches CCTV / bodycam on-screen legend.
@@ -498,8 +833,12 @@ CreateThread(function()
 
             applyStaticCameraState()
             Wait(0)
-        elseif activeView and activeCamera and activeView.kind == 'bodycam' then
+        elseif activeView and activeCamera then
             bodycamInputGate()
+            if activeView.kind == 'air' then
+                Wait(0)
+                goto continue
+            end
             local minFov = getMinFov()
             local maxFov = getMaxFov()
             local boost = 1.0
@@ -517,16 +856,16 @@ CreateThread(function()
 
             local m = boost * ft * 60.0
 
-            if IsControlPressed(0, 32) then
+            if activeView.kind == 'bodycam' and IsControlPressed(0, 32) then
                 activeView.pitch = clamp(activeView.pitch + 1.4 * m, -35.0, 20.0)
             end
-            if IsControlPressed(0, 33) then
+            if activeView.kind == 'bodycam' and IsControlPressed(0, 33) then
                 activeView.pitch = clamp(activeView.pitch - 1.4 * m, -35.0, 20.0)
             end
-            if IsControlPressed(0, 34) then
+            if activeView.kind == 'bodycam' and IsControlPressed(0, 34) then
                 activeView.headingOffset = clamp(activeView.headingOffset + 2.4 * m, -35.0, 35.0)
             end
-            if IsControlPressed(0, 35) then
+            if activeView.kind == 'bodycam' and IsControlPressed(0, 35) then
                 activeView.headingOffset = clamp(activeView.headingOffset - 2.4 * m, -35.0, 35.0)
             end
             if IsControlPressed(0, 44) then
@@ -543,5 +882,6 @@ CreateThread(function()
         else
             Wait(200)
         end
+        ::continue::
     end
 end)

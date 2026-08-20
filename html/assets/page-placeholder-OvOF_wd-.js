@@ -1,0 +1,7 @@
+import{y as o,p as d,m as n,o as e,A as v,J as p,b as h,D as m}from"./vendor-svelte-5Z3zXTac.js";var x=m('<div class="placeholder svelte-17sci39"><div class="placeholder-inner svelte-17sci39"><svg class="placeholder-icon svelte-17sci39" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1"><rect x="3" y="3" width="18" height="18" rx="3"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="3" y1="9" x2="21" y2="9"></line></svg> <h2 class="placeholder-title svelte-17sci39"> </h2> <p class="placeholder-desc svelte-17sci39">This module is under development.</p></div></div>');const f={hash:"svelte-17sci39",code:`.placeholder.svelte-17sci39 {flex:1;display:flex;align-items:center;justify-content:center;
+    animation: svelte-17sci39-fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;}.placeholder-inner.svelte-17sci39 {display:flex;flex-direction:column;align-items:center;gap:calc(12px * var(--mdt-scale));opacity:0.4;}.placeholder-icon.svelte-17sci39 {width:calc(48px * var(--mdt-scale));height:calc(48px * var(--mdt-scale));color:var(--mdt-text-muted);}.placeholder-title.svelte-17sci39 {font-size:calc(18px * var(--mdt-scale));font-weight:600;color:var(--mdt-text-dim);}.placeholder-desc.svelte-17sci39 {font-size:calc(12px * var(--mdt-scale));color:var(--mdt-text-muted);}
+
+  @keyframes svelte-17sci39-fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }`};function g(t,s){o(t,f);let c=d(s,"title",3,"Page");var l=x(),a=e(l),i=n(e(a),2),r=e(i);v(()=>p(r,c())),h(t,l)}export{g as P};

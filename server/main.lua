@@ -53,6 +53,7 @@ local PUBLIC_CALLBACKS = {
     ['cortex_mdt:getMyCitations'] = true,
     ['cortex_mdt:getCitation'] = true,
     ['cortex_mdt:markCitationViewed'] = true,
+    ['cortex_mdt:submitPublicComplaint'] = true,
     ['cortex_mdt:getConfig'] = true,
     ['cortex_mdt:getLocalStorage'] = true,
     ['cortex_mdt:setLocalStorage'] = true,

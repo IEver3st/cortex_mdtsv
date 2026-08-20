@@ -8,11 +8,14 @@
 
   let mapContainer;
   let mapInstance = null;
+  let mapReady = $state(false);
+  let tileState = $state('loading');
   let callMarkers = new Map();
   let unitMarkers = new Map();
   let hasInitialView = false;
   let lastFocusKey = null;
 
+  const OX_TILE_URL = 'https://s.rsg.sc/sc/images/games/GTAV/map/game/{z}/{x}/{y}.jpg';
   const OX_MAP_CENTER = [-119.43, 58.84];
   const OX_LAT_PR_100 = 1.421;
   const OX_MIN_ZOOM = 2;
@@ -87,6 +90,8 @@
   onMount(() => {
     if (!mapContainer) return;
 
+    mapReady = false;
+    tileState = 'loading';
     mapInstance = L.map(mapContainer, {
       center: OX_MAP_CENTER,
       zoom: OX_STARTUP_ZOOM,
@@ -100,11 +105,33 @@
       attributionControl: false,
     });
 
+    let tileErrors = 0;
+    L.tileLayer(OX_TILE_URL, {
+      bounds: OX_MAP_BOUNDS,
+      minZoom: OX_MIN_ZOOM,
+      maxZoom: OX_MAX_ZOOM,
+      noWrap: true,
+      updateWhenIdle: true,
+    })
+      .on('load', () => {
+        tileState = 'ready';
+      })
+      .on('tileerror', () => {
+        tileErrors += 1;
+        if (tileErrors >= 3) tileState = 'error';
+      })
+      .addTo(mapInstance);
+
     requestAnimationFrame(() => {
+      if (!mapInstance) return;
       mapInstance.invalidateSize(false);
+      mapReady = true;
     });
 
     return () => {
+      mapReady = false;
+      callMarkers.clear();
+      unitMarkers.clear();
       mapInstance.remove();
       mapInstance = null;
     };
@@ -117,7 +144,7 @@
   }
 
   $effect(() => {
-    if (!mapInstance) return;
+    if (!mapReady || !mapInstance) return;
 
     // Update call markers
     const currentCallIds = new Set();
@@ -152,7 +179,7 @@
   });
 
   $effect(() => {
-    if (!mapInstance) return;
+    if (!mapReady || !mapInstance) return;
 
     // Update unit markers
     const currentSources = new Set();
@@ -187,7 +214,7 @@
 
   // Focus on selected call
   $effect(() => {
-    if (!mapInstance || !selectedCallId) {
+    if (!mapReady || !mapInstance || !selectedCallId) {
       lastFocusKey = null;
       return;
     }
@@ -211,7 +238,7 @@
 
   // Initial viewport fit
   $effect(() => {
-    if (!mapInstance || hasInitialView || selectedCallId) return;
+    if (!mapReady || !mapInstance || hasInitialView || selectedCallId) return;
 
     const allPoints = [];
     for (const call of calls) {
@@ -237,21 +264,63 @@
   });
 </script>
 
-<div class="dispatch-map-wrap" bind:this={mapContainer}></div>
+<div class="dispatch-map-shell">
+  <div class="dispatch-map-wrap" bind:this={mapContainer}></div>
+  {#if tileState === 'loading'}
+    <div class="tile-status" role="status"><span></span>Loading map tiles</div>
+  {:else if tileState === 'error'}
+    <div class="tile-status tile-status--error" role="alert">Map tiles are unavailable</div>
+  {/if}
+</div>
 
 <style>
-  .dispatch-map-wrap {
+  .dispatch-map-shell {
+    position: relative;
     width: 100%;
     height: 100%;
     min-height: 200px;
     border-radius: var(--mdt-radius);
     overflow: hidden;
+  }
+
+  .dispatch-map-wrap {
+    position: absolute;
+    inset: 0;
     background-color: var(--mdt-bg);
     background-image:
       linear-gradient(rgba(148, 163, 184, 0.1) 1px, transparent 1px),
       linear-gradient(90deg, rgba(148, 163, 184, 0.1) 1px, transparent 1px),
       radial-gradient(circle at 50% 48%, rgba(59, 130, 246, 0.11), transparent 58%);
     background-size: 32px 32px, 32px 32px, 100% 100%;
+  }
+
+  .tile-status {
+    position: absolute;
+    left: calc(10px * var(--mdt-scale));
+    bottom: calc(10px * var(--mdt-scale));
+    z-index: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: calc(7px * var(--mdt-scale));
+    padding: calc(6px * var(--mdt-scale)) calc(8px * var(--mdt-scale));
+    border: 1px solid var(--mdt-border-2);
+    border-radius: var(--mdt-radius-sm);
+    background: color-mix(in srgb, var(--mdt-bg) 92%, transparent);
+    color: var(--mdt-text-dim);
+    font-size: calc(9px * var(--mdt-scale));
+    pointer-events: none;
+  }
+
+  .tile-status span {
+    width: calc(6px * var(--mdt-scale));
+    height: calc(6px * var(--mdt-scale));
+    border-radius: 50%;
+    background: var(--mdt-accent);
+  }
+
+  .tile-status--error {
+    border-color: color-mix(in srgb, var(--mdt-error) 45%, var(--mdt-border));
+    color: var(--mdt-error);
   }
 
   :global(.dispatch-call-marker),

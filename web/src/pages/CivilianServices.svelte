@@ -11,7 +11,9 @@
     ChevronRight,
     Clock,
     ScrollText,
+    ShieldAlert,
   } from '@lucide/svelte';
+  import { isEnvBrowser, mockNuiMessage, nuiPost } from '../lib/utils/nui.js';
 
   let mounted = $state(false);
 
@@ -20,6 +22,7 @@
     { id: 'veh-reg',      label: 'Vehicle Registration',      icon: Car,           desc: 'Register a new vehicle or renew existing registration', status: 'Available',  statusColor: 'var(--mdt-success)' },
     { id: 'name-change',  label: 'Legal Name Change',         icon: FileSignature, desc: 'Submit a petition for legal name change',               status: 'Available',  statusColor: 'var(--mdt-success)' },
     { id: 'address',      label: 'Address Change',            icon: MapPin,        desc: 'Update your residential address on file',               status: 'Available',  statusColor: 'var(--mdt-success)' },
+    { id: 'ia-complaint', label: 'Personnel Complaint',       icon: ShieldAlert,   desc: 'File a restricted complaint with Internal Affairs',     status: 'Available',  statusColor: 'var(--mdt-success)' },
     { id: 'business-lic', label: 'Business License',          icon: Building2,     desc: 'Apply for or renew a business operating license',       status: 'Coming Soon', statusColor: 'var(--mdt-text-muted)' },
     { id: 'non-emergency',label: 'Non-Emergency Reports',     icon: Phone,         desc: 'File noise complaints, property damage, and more',      status: 'Coming Soon', statusColor: 'var(--mdt-text-muted)' },
   ];
@@ -37,6 +40,14 @@
   function handleServiceClick(serviceId) {
     if (serviceId === 'veh-reg') {
       mdtStore.activePage = 'civ-vehicles';
+    } else if (serviceId === 'ia-complaint') {
+      if (isEnvBrowser()) {
+        mockNuiMessage('cortex_mdt:showComplaint', {
+          reporterName: [mdtStore.civilian?.firstName, mdtStore.civilian?.lastName].filter(Boolean).join(' '),
+        });
+      } else {
+        void nuiPost('cortex_mdt:openComplaint');
+      }
     }
   }
 </script>

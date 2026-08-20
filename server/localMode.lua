@@ -137,6 +137,214 @@ local function clone(value)
     return copy
 end
 
+local SNAPSHOT_STORAGE_KEY = 'cortex_mdt:standalone_records:v2'
+local DEFAULT_PERSIST_DEBOUNCE_MS = 350
+local snapshotDirty = false
+local snapshotFlushScheduled = false
+
+local NUMERIC_KEY_COLLECTIONS = {
+    'officersById',
+    'unitsByOfficerId',
+    'vehicleImpounds',
+    'reports',
+    'reportTimeline',
+    'reportEntities',
+    'reportParticipants',
+    'reportCharges',
+    'cases',
+    'casePersonnel',
+    'caseLinks',
+    'evidence',
+    'evidenceCustody',
+    'bolos',
+    'warrants',
+    'weapons',
+    'weaponHistory',
+    'citations',
+}
+
+local COUNTER_KEYS = {
+    'nextOfficerId',
+    'nextAnnouncementId',
+    'nextAuditId',
+    'nextChatId',
+    'nextReportId',
+    'nextCaseId',
+    'nextEvidenceId',
+    'nextBoloId',
+    'nextWarrantId',
+    'nextWeaponId',
+    'nextVehicleImpoundId',
+    'nextAttachmentId',
+    'nextCitationId',
+}
+
+local DURABLE_COLLECTIONS = {
+    'officersById',
+    'officerIdsByIdentifier',
+    'unitsByOfficerId',
+    'announcements',
+    'auditLogs',
+    'chatMessages',
+    'settings',
+    'citizenProfiles',
+    'citizenLicenses',
+    'vehicleProfiles',
+    'vehicleProfilesByPlate',
+    'vehicleImpounds',
+    'reports',
+    'reportTimeline',
+    'reportEntities',
+    'reportParticipants',
+    'reportCharges',
+    'cases',
+    'casePersonnel',
+    'caseLinks',
+    'evidence',
+    'evidenceCustody',
+    'bolos',
+    'warrants',
+    'weapons',
+    'weaponHistory',
+    'attachmentsByParent',
+    'citations',
+}
+
+local function standalonePersistenceEnabled()
+    local config = type(Config.StandalonePersistence) == 'table' and Config.StandalonePersistence or {}
+    return config.enabled ~= false
+end
+
+local function normalizeNumericKeys(collection)
+    if type(collection) ~= 'table' then
+        return {}
+    end
+
+    local normalized = {}
+    for key, value in pairs(collection) do
+        local numericKey = tonumber(key)
+        normalized[numericKey or key] = value
+    end
+    return normalized
+end
+
+local function restoreDurableSnapshot()
+    if not standalonePersistenceEnabled() then
+        return
+    end
+
+    local stored = LocalStorage.get(SNAPSHOT_STORAGE_KEY)
+    if type(stored) ~= 'table' or tonumber(stored.version) ~= 2 then
+        return
+    end
+
+    for i = 1, #COUNTER_KEYS do
+        local key = COUNTER_KEYS[i]
+        state[key] = math.max(1, tonumber(stored[key]) or tonumber(state[key]) or 1)
+    end
+
+    for i = 1, #DURABLE_COLLECTIONS do
+        local key = DURABLE_COLLECTIONS[i]
+        if type(stored[key]) == 'table' then
+            state[key] = stored[key]
+        end
+    end
+
+    for i = 1, #NUMERIC_KEY_COLLECTIONS do
+        local key = NUMERIC_KEY_COLLECTIONS[i]
+        state[key] = normalizeNumericKeys(state[key])
+    end
+
+    state.officerIdsByIdentifier = type(state.officerIdsByIdentifier) == 'table' and state.officerIdsByIdentifier or {}
+    for officerId, officer in pairs(state.officersById) do
+        if type(officer) == 'table' then
+            officer.source = nil
+            if trim(officer.identifier) ~= '' then
+                state.officerIdsByIdentifier[officer.identifier] = tonumber(officerId) or officerId
+            end
+        end
+    end
+
+    -- Server IDs and on-duty state are session facts. Never restore them after a restart.
+    for _, unit in pairs(state.unitsByOfficerId) do
+        if type(unit) == 'table' then
+            unit.source = nil
+            unit.status = 'off_duty'
+            unit.assignment = nil
+        end
+    end
+
+    -- Keep backwards-compatible settings/announcement keys authoritative when present.
+    local legacySettings = getStoredGlobalSettings()
+    if next(legacySettings) ~= nil then
+        state.settings = legacySettings
+    end
+    local legacyAnnouncements = getStoredAnnouncements()
+    if #legacyAnnouncements > 0 then
+        state.announcements = legacyAnnouncements
+    end
+end
+
+local function buildDurableSnapshot()
+    local snapshot = { version = 2 }
+    for i = 1, #COUNTER_KEYS do
+        local key = COUNTER_KEYS[i]
+        snapshot[key] = state[key]
+    end
+    for i = 1, #DURABLE_COLLECTIONS do
+        local key = DURABLE_COLLECTIONS[i]
+        snapshot[key] = clone(state[key])
+    end
+
+    for _, officer in pairs(snapshot.officersById or {}) do
+        if type(officer) == 'table' then
+            officer.source = nil
+        end
+    end
+    for _, unit in pairs(snapshot.unitsByOfficerId or {}) do
+        if type(unit) == 'table' then
+            unit.source = nil
+            unit.status = 'off_duty'
+            unit.assignment = nil
+        end
+    end
+
+    return snapshot
+end
+
+local function flushDurableSnapshot()
+    snapshotFlushScheduled = false
+    if not snapshotDirty or not standalonePersistenceEnabled() then
+        return true
+    end
+
+    local ok = LocalStorage.set(SNAPSHOT_STORAGE_KEY, buildDurableSnapshot())
+    if ok then
+        snapshotDirty = false
+    else
+        print('[cortex_mdt] Failed to persist standalone records; keeping the current in-memory state.')
+    end
+    return ok == true
+end
+
+local function markDurableSnapshotDirty()
+    if not standalonePersistenceEnabled() then
+        return
+    end
+
+    snapshotDirty = true
+    if snapshotFlushScheduled then
+        return
+    end
+
+    snapshotFlushScheduled = true
+    local config = type(Config.StandalonePersistence) == 'table' and Config.StandalonePersistence or {}
+    local delay = math.max(100, math.min(5000, tonumber(config.debounceMs) or DEFAULT_PERSIST_DEBOUNCE_MS))
+    SetTimeout(delay, flushDurableSnapshot)
+end
+
+restoreDurableSnapshot()
+
 local function isoTimestamp()
     return os.date('!%Y-%m-%dT%H:%M:%SZ')
 end
@@ -2340,6 +2548,75 @@ function LocalMode.restoreCitations()
         state.nextCitationId = maxId
     end
 end
+
+function LocalMode.flushPersistentState()
+    return flushDurableSnapshot()
+end
+
+local DURABLE_MUTATORS = {
+    'ensureOfficer',
+    'upsertOfficerUnitState',
+    'updateOfficerAdmin',
+    'auditLog',
+    'updateSetting',
+    'createAnnouncement',
+    'deleteAnnouncement',
+    'addChatMessage',
+    'upsertExternalCitizen',
+    'updateCitizen',
+    'updateCitizenLicenses',
+    'createLicenseType',
+    'updateLicenseType',
+    'deleteLicenseType',
+    'upsertExternalVehicle',
+    'impoundVehicle',
+    'releaseImpound',
+    'createReport',
+    'updateReport',
+    'addReportTimeline',
+    'addReportEntity',
+    'removeReportEntity',
+    'createCase',
+    'updateCase',
+    'addCaseLink',
+    'removeCaseLink',
+    'addCasePersonnel',
+    'removeCasePersonnel',
+    'addAttachment',
+    'removeAttachment',
+    'createEvidence',
+    'updateEvidence',
+    'transferEvidence',
+    'createBolo',
+    'updateBoloStatus',
+    'createWarrant',
+    'updateWarrantStatus',
+    'createWeapon',
+    'updateWeapon',
+    'transferWeapon',
+    'saveOfficerAvatar',
+    'handlePlayerDropped',
+    'issueCitation',
+    'markCitationViewed',
+}
+
+for i = 1, #DURABLE_MUTATORS do
+    local methodName = DURABLE_MUTATORS[i]
+    local original = LocalMode[methodName]
+    if type(original) == 'function' then
+        LocalMode[methodName] = function(...)
+            local result = table.pack(original(...))
+            markDurableSnapshotDirty()
+            return table.unpack(result, 1, result.n)
+        end
+    end
+end
+
+AddEventHandler('onResourceStop', function(stoppedResource)
+    if stoppedResource == resourceName then
+        flushDurableSnapshot()
+    end
+end)
 
 _G.CortexLocalMode = LocalMode
 

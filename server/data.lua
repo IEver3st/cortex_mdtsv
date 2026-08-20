@@ -3586,7 +3586,14 @@ lib.callback.register('cortex_mdt:getCivilianRecords', function(source, data)
     return { ok = true, records = records }
 end)
 
-lib.callback.register('cortex_mdt:getSops', function()
+lib.callback.register('cortex_mdt:getSops', function(source)
+    local parity = rawget(_G, 'CortexMdtParity')
+    if type(parity) == 'table' and type(parity.listSops) == 'function' then
+        return {
+            ok = true,
+            sops = parity.listSops(source),
+        }
+    end
     return {
         ok = true,
         sops = Config.SOPs or Config.Sops or {},

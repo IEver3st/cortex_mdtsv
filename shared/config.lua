@@ -67,6 +67,13 @@ Config.StandaloneCivilianMode = {
     claimOnGenerate = true,
 }
 
+-- Durable JSON storage used whenever the MDT is not using its SQL backend.
+-- Writes are verified and atomically replaced with a recoverable .bak copy.
+Config.StandalonePersistence = {
+    enabled = true,
+    debounceMs = 350,
+}
+
 -- Default citizen mugshot used whenever a player/citizen record has no custom image.
 Config.DefaultMugshot = 'default-avatar.svg'
 
@@ -262,7 +269,8 @@ Config.Dispatch = {
     bridgeRefreshDebounceMs = 1200,
     allowExternalLifecycleReadOnly = true,
     map = {
-        tileUrl = false,
+        -- Same Rockstar tile system and projection used by ox_mdt dispatch.
+        tileUrl = 'https://s.rsg.sc/sc/images/games/GTAV/map/game/{z}/{x}/{y}.jpg',
         minZoom = 2,
         maxZoom = 7,
         startZoom = 5,
@@ -301,6 +309,88 @@ Config.CCTV = {
     defaultFov = 52.0,
     minFov = 18.0,
     maxFov = 90.0,
+}
+
+-- Live bodycams are framework-independent. On standalone servers every
+-- registered on-duty officer is considered recording unless they opt out with
+-- /bodycam. Frames are only transmitted while at least one authorised viewer
+-- is watching the feed.
+Config.Bodycams = {
+    enabled = true,
+    command = 'bodycam',
+    autoActivateOnDuty = true,
+    allowCrossRoutingBuckets = false,
+    streamIntervalMs = 100,
+    staleFrameMs = 2000,
+    maxViewersPerFeed = 16,
+    audio = {
+        enabled = true,
+        -- Safe mode: adjusts an already-routed Mumble voice only. It never
+        -- replaces pma-voice radio/call targets and cannot hear distant audio.
+        mode = 'proximity',
+        volume = 1.0,
+    },
+}
+
+-- Dashcams are derived from on-duty officers driving emergency-class vehicles.
+-- Per-model offsets can be added with model names as keys; the default keeps
+-- standalone setup zero-config while still allowing vehicle-specific tuning.
+Config.Dashcams = {
+    enabled = true,
+    emergencyVehicleClass = 18,
+    syncIntervalMs = 200,
+    allowCrossRoutingBuckets = false,
+    defaultOffset = { x = 0.0, y = 0.72, z = 1.18 },
+    defaultRearOffset = { x = 0.0, y = -0.82, z = 1.12 },
+    defaultPitch = -5.0,
+    defaultRearPitch = -3.0,
+    -- Local-space axes are x = right, y = forward, z = up (metres).
+    -- Project Sloth side/forward/height entries are accepted too.
+    modelOffsets = {
+        -- ['police'] = {
+        --     front = { x = 0.0, y = 0.75, z = 0.55, pitch = 1.0 },
+        --     rear = { x = 0.0, y = -1.20, z = 0.60, pitch = 1.0 },
+        -- },
+        -- ['police2'] = { side = 0.0, forward = 1.10, height = 0.85, pitch = -6.0 },
+    },
+}
+
+-- Cortex PolCam publishes validated camera transforms through server exports.
+-- The MDT mirrors those transforms as a read-only feed; operator zoom, vision,
+-- target lock, and camera motion stay synchronised for every viewer.
+Config.AirSupport = {
+    enabled = true,
+    resource = 'cortex_polcam',
+    syncIntervalMs = 200,
+    allowCrossRoutingBuckets = false,
+}
+
+-- Cross-department visibility for the parity modules. Mutual groups share in
+-- both directions; one-way entries allow viewers to read target departments.
+Config.DepartmentSharing = {
+    mutual = {
+        {
+            departments = { 'police', 'sheriff', 'highway' },
+            features = { 'bulletins', 'awards', 'ia', 'ppr', 'court', 'sops', 'patrols' },
+        },
+    },
+    oneWay = {},
+}
+
+Config.FeatureParity = {
+    enabled = true,
+    manageAce = 'cortex_mdt.manage',
+    publicComplaintCommand = 'complaint',
+    maxRecordsPerFeature = 2000,
+    features = {
+        bulletins = true,
+        awards = true,
+        ia = true,
+        ppr = true,
+        court = true,
+        sops = true,
+        patrols = true,
+    },
 }
 
 -- Preset license types seeded into mdt_license_types on first fetch.

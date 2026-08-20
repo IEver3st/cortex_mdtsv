@@ -119,9 +119,18 @@ function createDataStore() {
 
   let bodycamsList = $state([]);
   let activeBodycamFeed = $state(null);
+  let liveFeeds = $state({ bodycams: [], dashcams: [], airFeeds: [] });
+  let liveFeedCapabilities = $state({
+    bodycams: true,
+    dashcams: true,
+    airSupport: true,
+    airSupportConnected: false,
+    bodycamAudio: false,
+    bodycamAudioMode: 'disabled',
+  });
+  let cameraFeedState = $state({ state: 'idle', detail: '', direction: 'front' });
   /** Live street line from client while viewing bodycam (target ped position). */
   let bodycamLiveLocation = $state('');
-
   let chargesList = $state([]);
   let licenseTypesList = $state([]);
 
@@ -1624,64 +1633,79 @@ function createDataStore() {
     return resp;
   }
 
-  async function fetchBodycams() {
+  async function fetchLiveFeeds() {
     if (isEnvBrowser()) {
-      bodycamsList = [
-        {
-          source: 12,
-          callsign: '1-A-12',
-          name: 'John Doe',
-          rank: 'Officer',
-          department: 'police',
-          viewerCount: 1,
-          avatar: DEFAULT_MUGSHOT_URL,
-        },
-        {
-          source: 27,
-          callsign: '1-S-27',
-          name: 'Sarah Alvarez',
-          rank: 'Sergeant',
-          department: 'police',
-          viewerCount: 0,
-          avatar: DEFAULT_MUGSHOT_URL,
-        },
-      ];
-      return { ok: true, bodycams: bodycamsList };
+      liveFeeds = {
+        bodycams: [
+          { id: 'body:12', feedId: 'body:12', feedType: 'bodycam', source: 12, callsign: '1-A-12', name: 'John Doe', rank: 'Officer', department: 'police', viewerCount: 1, status: 'live' },
+          { id: 'body:27', feedId: 'body:27', feedType: 'bodycam', source: 27, callsign: '1-S-27', name: 'Sarah Alvarez', rank: 'Sergeant', department: 'police', viewerCount: 0, status: 'live' },
+        ],
+        dashcams: [
+          { id: 'dash:241', feedId: 'dash:241', feedType: 'dashcam', source: 12, callsign: '1-A-12', name: 'John Doe', plate: 'LSPD 412', label: '1-A-12 · LSPD 412', viewerCount: 0, status: 'live' },
+        ],
+        airFeeds: [
+          { id: 'air:903', feedId: 'air:903', feedType: 'air', callsign: 'AIR-1', label: 'Metro Air One', viewerCount: 2, status: 'live', preview: { visionMode: 'thermal', fov: 34 }, tracking: { active: true, plate: '84QJX219', vehicleLabel: 'Police Cruiser' } },
+        ],
+      };
+      bodycamsList = liveFeeds.bodycams;
+      liveFeedCapabilities = { bodycams: true, dashcams: true, airSupport: true, airSupportConnected: true, bodycamAudio: true, bodycamAudioMode: 'proximity' };
+      return { ok: true, ...liveFeeds, capabilities: liveFeedCapabilities };
     }
 
-    const resp = await nuiPost('cortex_mdt:getBodycams');
+    const resp = await nuiPost('cortex_mdt:getLiveFeeds');
     if (resp?.ok) {
-      bodycamsList = resp.bodycams || [];
+      liveFeeds = {
+        bodycams: resp.bodycams || resp.feeds?.bodycams || [],
+        dashcams: resp.dashcams || resp.feeds?.dashcams || [],
+        airFeeds: resp.airFeeds || resp.feeds?.air || [],
+      };
+      bodycamsList = liveFeeds.bodycams;
+      liveFeedCapabilities = { ...liveFeedCapabilities, ...(resp.capabilities || {}) };
     }
 
     return resp;
   }
 
-  async function viewBodycam(targetSource) {
+  async function fetchBodycams() {
+    return fetchLiveFeeds();
+  }
+
+  async function viewLiveFeed(feed, direction = 'front') {
+    if (!feed?.feedId || !feed?.feedType) return { ok: false, error: 'Feed is unavailable.' };
     if (isEnvBrowser()) {
-      const bodycam = bodycamsList.find((entry) => entry.source === targetSource);
-      if (!bodycam) {
-        return { ok: false, error: 'Bodycam not available.' };
-      }
-      activeBodycamFeed = bodycam;
+      activeBodycamFeed = { ...feed, direction };
       activeCameraFeed = null;
-      bodycamLiveLocation = 'Ineos Pl / Power St';
-      return { ok: true, bodycam };
+      cameraFeedState = { state: 'live', detail: '', direction };
+      bodycamLiveLocation = feed.feedType === 'air' ? 'Mirror Park / East Vinewood' : 'Power St / Vespucci Blvd';
+      return { ok: true, feed: activeBodycamFeed, direction, capabilities: liveFeedCapabilities };
     }
 
-    const resp = await nuiPost('cortex_mdt:viewBodycam', { targetSource });
-    if (resp?.ok && resp.bodycam) {
-      activeBodycamFeed = resp.bodycam;
+    cameraFeedState = { state: 'connecting', detail: 'Establishing the secure feed.', direction };
+    const resp = await nuiPost('cortex_mdt:viewLiveFeed', {
+      feedId: feed.feedId,
+      feedType: feed.feedType,
+      direction,
+    });
+    if (resp?.ok && resp.feed) {
+      activeBodycamFeed = { ...resp.feed, direction: resp.direction || direction };
       activeCameraFeed = null;
+      liveFeedCapabilities = { ...liveFeedCapabilities, ...(resp.capabilities || {}) };
+    } else {
+      cameraFeedState = { state: 'error', detail: resp?.error || 'Unable to open the feed.', direction };
     }
-
     return resp;
+  }
+
+  async function viewBodycam(targetSource) {
+    const bodycam = bodycamsList.find((entry) => Number(entry.source) === Number(targetSource));
+    return bodycam ? viewLiveFeed(bodycam) : { ok: false, error: 'Bodycam not available.' };
   }
 
   async function stopCameraView() {
     activeCameraFeed = null;
     activeBodycamFeed = null;
     bodycamLiveLocation = '';
+    cameraFeedState = { state: 'idle', detail: '', direction: 'front' };
 
     if (isEnvBrowser()) {
       return { ok: true };
@@ -2444,9 +2468,17 @@ function createDataStore() {
     set bodycamsList(v) { bodycamsList = v; },
     get activeBodycamFeed() { return activeBodycamFeed; },
     set activeBodycamFeed(v) { activeBodycamFeed = v; },
+    get liveFeeds() { return liveFeeds; },
+    set liveFeeds(v) { liveFeeds = v || { bodycams: [], dashcams: [], airFeeds: [] }; },
+    get liveFeedCapabilities() { return liveFeedCapabilities; },
+    set liveFeedCapabilities(v) { liveFeedCapabilities = { ...liveFeedCapabilities, ...(v || {}) }; },
+    get cameraFeedState() { return cameraFeedState; },
+    set cameraFeedState(v) { cameraFeedState = { ...cameraFeedState, ...(v || {}) }; },
     get bodycamLiveLocation() { return bodycamLiveLocation; },
     set bodycamLiveLocation(v) { bodycamLiveLocation = typeof v === 'string' ? v : ''; },
     fetchBodycams,
+    fetchLiveFeeds,
+    viewLiveFeed,
     viewBodycam,
     stopCameraView,
     cameraControl,

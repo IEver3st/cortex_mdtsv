@@ -18,6 +18,7 @@ local pages = {
     'bodycams',
     'fto',
     'sops',
+    'command',
     'settings',
     'search',
     'citations',

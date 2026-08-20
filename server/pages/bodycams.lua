@@ -3,7 +3,9 @@ return function(ctx)
         callbacks = {
             'cortex_mdt:getBodycams',
             'cortex_mdt:viewBodycam',
-            'cortex_mdt:stopBodycam',
+            'cortex_mdt:getLiveFeeds',
+            'cortex_mdt:viewLiveFeed',
+            'cortex_mdt:stopCameraView',
             'cortex_mdt:setBodycamAudio',
         },
         storage = 'live',

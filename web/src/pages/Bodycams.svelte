@@ -1,1892 +1,676 @@
 <script>
   import { onDestroy, onMount } from 'svelte';
   import {
-    Video,
-    Search,
-    RefreshCw,
+    ArrowLeft,
+    CarFront,
+    Crosshair,
     Eye,
+    Gauge,
+    Helicopter,
+    RefreshCw,
+    RotateCcw,
+    Search,
+    Signal,
+    SignalZero,
+    SwitchCamera,
+    Users,
+    Video,
     Volume2,
     VolumeX,
-    Radio,
-    VideoOff,
-    Users,
   } from '@lucide/svelte';
   import { dataStore } from '../lib/stores/data.svelte.js';
-  import { mdtStore } from '../lib/stores/mdt.svelte.js';
 
-  let loading = $state(true);
-  let busy = $state(false);
-  let mode = $state('list');
-  let errorMessage = $state('');
-  let refreshHandle = null;
-  let previewCacheBust = $state(0);
+  const FEED_TYPES = [
+    { id: 'bodycam', label: 'Body cameras', short: 'Body', icon: Video },
+    { id: 'dashcam', label: 'Vehicle cameras', short: 'Vehicle', icon: CarFront },
+    { id: 'air', label: 'Air support', short: 'Air', icon: Helicopter },
+  ];
 
-  const PREVIEW_POLL_MIN_MS = 120_000;
-  const PREVIEW_POLL_MAX_MS = 180_000;
-  let audioEnabled = $state({});
+  let selectedType = $state('bodycam');
   let searchQuery = $state('');
-  let filterDept = $state('all');
+  let department = $state('all');
+  let loading = $state(true);
+  let busyFeedId = $state('');
+  let errorMessage = $state('');
+  let audioEnabled = $state(false);
+  let refreshTimer;
 
-  let bodycams = $derived(dataStore.bodycamsList || []);
-  let activeBodycam = $derived(dataStore.activeBodycamFeed);
-  let officer = $derived(mdtStore.officer);
+  let liveFeeds = $derived(dataStore.liveFeeds || { bodycams: [], dashcams: [], airFeeds: [] });
+  let capabilities = $derived(dataStore.liveFeedCapabilities || {});
+  let activeFeed = $derived(dataStore.activeBodycamFeed);
+  let feedState = $derived(dataStore.cameraFeedState || { state: 'idle' });
+  let liveLocation = $derived(dataStore.bodycamLiveLocation || '');
 
-  let filteredBodycams = $derived.by(() => {
-    let list = bodycams;
-    if (filterDept !== 'all') {
-      list = list.filter((b) => (b.department || '').toLowerCase() === filterDept);
-    }
-    if (searchQuery.trim()) {
-      const q = searchQuery.trim().toLowerCase();
-      list = list.filter(
-        (b) =>
-          (b.name || '').toLowerCase().includes(q) ||
-          (b.callsign || '').toLowerCase().includes(q) ||
-          (b.rank || '').toLowerCase().includes(q),
-      );
-    }
-    return list;
-  });
+  let bodycams = $derived(liveFeeds.bodycams || []);
+  let dashcams = $derived(liveFeeds.dashcams || []);
+  let airFeeds = $derived(liveFeeds.airFeeds || []);
+  let lockedAirFeeds = $derived(airFeeds.filter((feed) => feed.tracking?.active).length);
+  let liveTracking = $derived(feedState.tracking || activeFeed?.tracking || {});
+  let liveVisionMode = $derived(feedState.visionMode || activeFeed?.preview?.visionMode || 'normal');
+  let liveFov = $derived(Number(feedState.fov ?? activeFeed?.preview?.fov) || 0);
+  let currentFeeds = $derived(
+    selectedType === 'bodycam' ? bodycams : selectedType === 'dashcam' ? dashcams : airFeeds,
+  );
 
   let departments = $derived.by(() => {
-    const depts = new Set();
-    bodycams.forEach((b) => {
-      if (b.department) depts.add(b.department.toLowerCase());
+    const values = new Set();
+    bodycams.forEach((feed) => {
+      const value = String(feed.department || '').trim().toLowerCase();
+      if (value) values.add(value);
     });
-    return [...depts].sort();
+    return [...values].sort();
   });
 
-  let myBodycam = $derived.by(() => {
-    return bodycams.find(
-      (b) =>
-        b.callsign === officer.callsign ||
-        b.name === `${officer.firstName} ${officer.lastName}`,
-    );
+  let filteredFeeds = $derived.by(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return currentFeeds.filter((feed) => {
+      if (
+        selectedType === 'bodycam' &&
+        department !== 'all' &&
+        String(feed.department || '').toLowerCase() !== department
+      ) {
+        return false;
+      }
+      if (!query) return true;
+      return [
+        feed.callsign,
+        feed.name,
+        feed.label,
+        feed.plate,
+        feed.rank,
+        feed.department,
+        feed.tracking?.plate,
+        feed.tracking?.vehicleLabel,
+      ].some((value) => String(value || '').toLowerCase().includes(query));
+    });
   });
 
   let totalViewers = $derived(
-    bodycams.reduce((n, b) => n + (Number(b.viewerCount) || 0), 0),
+    [...bodycams, ...dashcams, ...airFeeds].reduce(
+      (total, feed) => total + (Number(feed.viewerCount) || 0),
+      0,
+    ),
   );
 
-  let liveLocation = $derived(dataStore.bodycamLiveLocation || '');
-  let feedClock = $state('');
+  function countFor(type) {
+    if (type === 'bodycam') return bodycams.length;
+    if (type === 'dashcam') return dashcams.length;
+    return airFeeds.length;
+  }
 
-  $effect(() => {
-    if (mode !== 'feed') {
-      return;
+  function titleFor(feed) {
+    if (feed.feedType === 'air') return feed.label || feed.callsign || 'Air support';
+    if (feed.feedType === 'dashcam') return feed.label || `${feed.callsign || 'Unit'} · ${feed.plate || 'No plate'}`;
+    return feed.name || feed.callsign || 'Field unit';
+  }
+
+  function detailFor(feed) {
+    if (feed.feedType === 'air') {
+      return feed.tracking?.active
+        ? `Tracking ${feed.tracking.plate || feed.tracking.vehicleLabel || 'target'}`
+        : 'No active target lock';
     }
-    const tick = () => {
-      feedClock = new Date().toLocaleString('en-US', {
-        hour12: false,
-        month: '2-digit',
-        day: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      });
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  });
+    if (feed.feedType === 'dashcam') return `${feed.name || 'Unknown operator'} · ${feed.plate || 'No plate'}`;
+    return `${feed.rank || 'Officer'} · ${String(feed.department || 'police').toUpperCase()}`;
+  }
 
-  $effect(() => {
-    if (mode === 'feed' && !activeBodycam) {
-      mode = 'list';
-    }
-  });
+  function airCrewLabel(feed) {
+    const crew = [];
+    if (feed.operatorSource) crew.push(`Operator ${feed.operatorSource}`);
+    if (feed.pilotSource && feed.pilotSource !== feed.operatorSource) crew.push(`Pilot ${feed.pilotSource}`);
+    return crew.join(' / ') || 'Crew unavailable';
+  }
 
-  async function loadBodycams() {
-    const resp = await dataStore.fetchBodycams();
-    if (!resp?.ok) {
-      errorMessage = resp?.error || 'Failed to load bodycams.';
+  function visionLabel(value) {
+    const mode = String(value || 'normal').toLowerCase();
+    if (mode === 'thermal') return 'Thermal';
+    if (mode === 'night' || mode === 'nightvision') return 'Night vision';
+    return 'Daylight';
+  }
+
+  function typeAvailable(type) {
+    if (type === 'bodycam') return capabilities.bodycams !== false;
+    if (type === 'dashcam') return capabilities.dashcams !== false;
+    return capabilities.airSupport !== false;
+  }
+
+  async function refreshFeeds({ quiet = false } = {}) {
+    if (!quiet) loading = true;
+    errorMessage = '';
+    const response = await dataStore.fetchLiveFeeds();
+    if (!response?.ok) errorMessage = response?.error || 'Operational feeds could not be loaded.';
+    if (!quiet) loading = false;
+  }
+
+  async function openFeed(feed, direction = 'front') {
+    busyFeedId = feed.feedId;
+    errorMessage = '';
+    audioEnabled = false;
+    const response = await dataStore.viewLiveFeed(feed, direction);
+    if (!response?.ok) errorMessage = response?.error || 'The selected feed could not be opened.';
+    busyFeedId = '';
+  }
+
+  async function closeFeed() {
+    busyFeedId = activeFeed?.feedId || 'closing';
+    if (audioEnabled) await dataStore.setBodycamAudio(false);
+    audioEnabled = false;
+    await dataStore.stopCameraView();
+    busyFeedId = '';
+    await refreshFeeds({ quiet: true });
+  }
+
+  async function toggleAudio() {
+    const response = await dataStore.setBodycamAudio(!audioEnabled);
+    if (response?.ok) {
+      audioEnabled = response.enabled === true;
     } else {
-      previewCacheBust = Date.now();
+      errorMessage = response?.error || 'Proximity audio is unavailable.';
     }
-    return resp;
   }
 
-  function pickPollDelay() {
-    return PREVIEW_POLL_MIN_MS + Math.random() * (PREVIEW_POLL_MAX_MS - PREVIEW_POLL_MIN_MS);
-  }
-
-  function scheduleBodycamPoll() {
-    refreshHandle = setTimeout(async () => {
-      const resp = await dataStore.fetchBodycams();
-      if (resp?.ok) previewCacheBust = Date.now();
-      scheduleBodycamPoll();
-    }, pickPollDelay());
+  async function toggleDirection() {
+    const response = await dataStore.cameraControl('toggle_direction');
+    if (response?.ok && activeFeed) {
+      const next = feedState.direction === 'rear' ? 'front' : 'rear';
+      dataStore.cameraFeedState = { direction: next };
+      dataStore.activeBodycamFeed = { ...activeFeed, direction: next };
+    }
   }
 
   onMount(async () => {
-    loading = true;
-    errorMessage = '';
-    await loadBodycams();
-    loading = false;
-    scheduleBodycamPoll();
+    await refreshFeeds();
+    refreshTimer = window.setInterval(() => {
+      if (!document.hidden && !activeFeed) void refreshFeeds({ quiet: true });
+    }, 30_000);
   });
 
   onDestroy(() => {
-    if (refreshHandle) {
-      clearTimeout(refreshHandle);
-    }
-    dataStore.stopCameraView();
+    if (refreshTimer) window.clearInterval(refreshTimer);
+    if (activeFeed) void dataStore.stopCameraView();
   });
-
-  async function viewBodycam(source) {
-    busy = true;
-    errorMessage = '';
-
-    const resp = await dataStore.viewBodycam(source);
-    if (resp?.ok) {
-      mode = 'feed';
-    } else {
-      errorMessage = resp?.error || 'Unable to open bodycam feed.';
-    }
-
-    busy = false;
-  }
-
-  async function backToList() {
-    busy = true;
-    await dataStore.stopCameraView();
-    mode = 'list';
-    busy = false;
-  }
-
-  async function toggleAudio(source) {
-    const next = !audioEnabled[source];
-    audioEnabled = { ...audioEnabled, [source]: next };
-    await dataStore.setBodycamAudio(next);
-  }
-
-  function isOwnFeed(bodycam) {
-    return (
-      bodycam.callsign === officer.callsign ||
-      bodycam.name === `${officer.firstName} ${officer.lastName}`
-    );
-  }
-
-  function nameInitials(name) {
-    const parts = (name || '').trim().split(/\s+/).filter(Boolean);
-    if (parts.length === 0) return '?';
-    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-  }
-
-  function previewSrc(url) {
-    if (!url) return '';
-    const sep = url.includes('?') ? '&' : '?';
-    return `${url}${sep}mdtprev=${previewCacheBust}`;
-  }
-
-  function clearSearch() {
-    searchQuery = '';
-  }
 </script>
 
-<div class="bc-page" class:feed-live={mode === 'feed'}>
-  {#if errorMessage && mode === 'feed'}
-    <div class="bc-error bc-error-float" role="alert">{errorMessage}</div>
-  {/if}
-  {#if mode === 'list'}
-    <section class="bc-shell" aria-label="Bodycam channels">
-      <header class="bc-toolbar">
-        <div class="bc-toolbar-r1">
-          <div class="bc-eyebrow">
-            <Video size={13} strokeWidth={2} />
-            <span>Field ops</span>
-          </div>
-          <label class="bc-field-label" for="bc-search-input">Find officer</label>
-        </div>
-        <div class="bc-toolbar-r2">
-          <div class="bc-toolbar-lead">
-            <h2 class="bc-h1">Bodycams</h2>
-            <p class="bc-desc">
-              Grid shows slow-refresh stills. <strong class="bc-desc-em">Watch live</strong> opens the in-world feed; pan
-              WASD, zoom Q/E, reset R. Audio per card when live.
-            </p>
-          </div>
-          <div class="bc-toolbar-search">
-            <div class="bc-field">
-              <span class="bc-field-ico" aria-hidden="true"><Search size={15} strokeWidth={2} /></span>
-              <input
-                id="bc-search-input"
-                type="search"
-                placeholder="Name, callsign, or rank"
-                autocomplete="off"
-                bind:value={searchQuery}
-              />
-              {#if searchQuery.trim()}
-                <button type="button" class="bc-field-clear" onclick={clearSearch} aria-label="Clear search">
-                  <span aria-hidden="true">×</span>
-                </button>
-              {/if}
-            </div>
-            <p class="bc-field-help">Filters the list below; stats row tracks active channels.</p>
-          </div>
-        </div>
-      </header>
+{#if activeFeed}
+  <section class="live-stage" aria-label={`${titleFor(activeFeed)} live feed`}>
+    <div class="live-topbar">
+      <div class="live-identity">
+        <span class="live-kicker font-mono">CORTEX VISUAL LINK</span>
+        <strong>{titleFor(activeFeed)}</strong>
+        <span>{detailFor(activeFeed)}</span>
+      </div>
+      <div class="live-signal" class:signal-warning={feedState.state === 'stale'} role="status">
+        {#if feedState.state === 'stale'}
+          <SignalZero size={15} />
+          <span>Signal delayed</span>
+        {:else}
+          <Signal size={15} />
+          <span>{feedState.state === 'connecting' ? 'Connecting' : 'Secure mirror'}</span>
+        {/if}
+      </div>
+    </div>
 
-      <div class="bc-control-row">
-        <div class="bc-stat-strip" aria-label="Summary">
-          <div class="bc-stat">
-            <span class="bc-stat-k"><Radio size={11} strokeWidth={2} /> Channels</span>
-            <span class="bc-stat-n font-mono">{bodycams.length}</span>
-          </div>
-          <span class="bc-stat-div" aria-hidden="true"></span>
-          <div class="bc-stat">
-            <span class="bc-stat-k"><Eye size={11} strokeWidth={2} /> Filtered</span>
-            <span class="bc-stat-n font-mono">{filteredBodycams.length}</span>
-          </div>
-          <span class="bc-stat-div" aria-hidden="true"></span>
-          <div class="bc-stat">
-            <span class="bc-stat-k"><Users size={11} strokeWidth={2} /> Watching</span>
-            <span class="bc-stat-n font-mono">{totalViewers}</span>
-          </div>
-          {#if myBodycam}
-            <span class="bc-stat-div" aria-hidden="true"></span>
-            <button
-              type="button"
-              class="bc-my-feed"
-              onclick={() => viewBodycam(myBodycam.source)}
-              disabled={busy}
-            >
-              <span class="bc-my-dot" aria-hidden="true"></span>
-              Open my bodycam
-            </button>
-          {/if}
-        </div>
+    <div class="live-reticle" aria-hidden="true">
+      <span></span>
+      <span></span>
+    </div>
 
-        <div class="bc-control-end">
-          <span class="bc-field-label bc-dept-lbl" id="bc-dept-label">Department</span>
-          <div class="bc-segment" role="group" aria-labelledby="bc-dept-label">
-            <button
-              type="button"
-              class="bc-seg-btn"
-              class:sel={filterDept === 'all'}
-              onclick={() => (filterDept = 'all')}
-            >
-              All depts
-            </button>
-            {#each departments as dept (dept)}
-              <button
-                type="button"
-                class="bc-seg-btn"
-                class:sel={filterDept === dept}
-                onclick={() => (filterDept = dept)}
-              >
-                {dept.toUpperCase()}
-              </button>
-            {/each}
-          </div>
+    <div class="live-telemetry font-mono">
+      <span>{activeFeed.feedId}</span>
+      {#if activeFeed.feedType === 'dashcam'}
+        <span>{String(feedState.direction || activeFeed.direction || 'front').toUpperCase()} CAMERA</span>
+        {#if feedState.speed != null}<span>{Math.round(Number(feedState.speed) * 2.23694)} MPH</span>{/if}
+      {:else if activeFeed.feedType === 'air'}
+        <span>{String(liveVisionMode).toUpperCase()}</span>
+        <span>FOV {Math.round(liveFov)}°</span>
+      {:else}
+        <span>BODY CAMERA</span>
+      {/if}
+      <span>{liveLocation || 'Resolving location…'}</span>
+    </div>
+
+    <div class="live-console">
+      <div class="console-copy">
+        <span class="console-label font-mono">
+          {#if activeFeed.feedType === 'air'}READ-ONLY POLCAM MIRROR{:else}LIVE CAMERA CONTROLS{/if}
+        </span>
+        {#if feedState.state === 'stale'}
+          <p>{feedState.detail || 'The source has not delivered a fresh frame yet.'}</p>
+        {:else if activeFeed.feedType === 'air' && liveTracking.active}
+          <p>
+            Target lock: {liveTracking.plate || liveTracking.vehicleLabel || 'unidentified target'}.
+            Operator camera, zoom, and vision changes stay synchronized automatically.
+          </p>
+        {:else if activeFeed.feedType === 'bodycam'}
+          <p>WASD adjusts the local observation angle. Q/E zooms and R resets the view.</p>
+        {:else if activeFeed.feedType === 'dashcam'}
+          <p>Switch between the forward and rear vehicle mounts. Q/E adjusts local zoom.</p>
+        {:else}
+          <p>Camera transforms are controlled by the active PolCam operator.</p>
+        {/if}
+      </div>
+
+      <div class="console-actions">
+        {#if activeFeed.feedType === 'dashcam'}
+          <button type="button" class="btn-secondary" onclick={toggleDirection}>
+            <SwitchCamera size={15} />
+            {feedState.direction === 'rear' ? 'Front camera' : 'Rear camera'}
+          </button>
+        {/if}
+        {#if activeFeed.feedType === 'bodycam' && capabilities.bodycamAudio && capabilities.bodycamAudioMode === 'proximity'}
+          <button type="button" class="btn-secondary" class:active-control={audioEnabled} onclick={toggleAudio}>
+            {#if audioEnabled}<Volume2 size={15} />{:else}<VolumeX size={15} />{/if}
+            Nearby voice {audioEnabled ? 'on' : 'off'}
+          </button>
+        {/if}
+        {#if activeFeed.feedType !== 'air'}
+          <button type="button" class="icon-control" onclick={() => dataStore.cameraControl('reset')} aria-label="Reset camera view" title="Reset camera view">
+            <RotateCcw size={15} />
+          </button>
+        {/if}
+        <button type="button" class="btn-exit" onclick={closeFeed} disabled={busyFeedId !== ''}>
+          <ArrowLeft size={15} />
+          Return to feeds
+        </button>
+      </div>
+    </div>
+  </section>
+{:else}
+  <div class="camera-page">
+    <section class="status-strip" aria-label="Camera system summary">
+      <div><Video size={14} /><span>Body</span><strong>{bodycams.length}</strong></div>
+      <div><CarFront size={14} /><span>Vehicle</span><strong>{dashcams.length}</strong></div>
+      <div class:offline={!capabilities.airSupportConnected}><Helicopter size={14} /><span>Air</span><strong>{airFeeds.length}</strong></div>
+      <div><Users size={14} /><span>Viewers</span><strong>{totalViewers}</strong></div>
+      <div class="system-state" class:offline={!capabilities.airSupportConnected}>
+        {#if capabilities.airSupportConnected}<Signal size={14} /> PolCam linked{:else}<SignalZero size={14} /> PolCam offline{/if}
+      </div>
+      <button type="button" class="refresh-button" onclick={() => refreshFeeds()} disabled={loading} aria-label="Refresh camera feeds" title="Refresh camera feeds">
+        <span class:spin={loading}><RefreshCw size={14} /></span>
+      </button>
+    </section>
+
+    {#if errorMessage || feedState.state === 'disconnected'}
+      <div class="notice notice-error" role="alert">
+        <SignalZero size={16} />
+        <span>{errorMessage || feedState.detail || 'The live feed disconnected.'}</span>
+      </div>
+    {:else if feedState.availabilityMessage}
+      <div class="notice" role="status">
+        <Signal size={16} />
+        <span>{feedState.availabilityMessage}</span>
+      </div>
+    {/if}
+
+    <div class="workbench">
+      <nav class="feed-nav" aria-label="Feed types">
+        {#each FEED_TYPES as type (type.id)}
+          {@const TypeIcon = type.icon}
           <button
             type="button"
-            class="bc-icon-btn"
-            onclick={loadBodycams}
-            disabled={loading || busy}
-            title="Pull latest channels and preview frames"
-            aria-label="Refresh channel list"
+            class:active={selectedType === type.id}
+            disabled={!typeAvailable(type.id)}
+            onclick={() => { selectedType = type.id; searchQuery = ''; department = 'all'; }}
           >
-            <span class="bc-refresh-ico" class:bc-spin={loading}>
-              <RefreshCw size={16} strokeWidth={2} />
-            </span>
+            <TypeIcon size={16} />
+            <span>{type.label}</span>
+            <strong class="font-mono">{countFor(type.id)}</strong>
           </button>
+        {/each}
+        <div class="nav-note">
+          <span class="font-mono">ACCESS RULE</span>
+          <p>Only on-duty feeds in your routing bucket are listed. Cross-bucket viewing is opt-in in server configuration.</p>
         </div>
-      </div>
+      </nav>
 
-      {#if errorMessage}
-        <div class="bc-error" role="alert">{errorMessage}</div>
-      {/if}
-
-      {#if loading}
-        <div class="bc-grid bc-grid-skel" aria-busy="true" aria-label="Loading channels">
-          {#each Array(6) as _, i (i)}
-            <div class="bc-skel-card" style="--sk: {i}">
-              <div class="bc-skel-preview"></div>
-              <div class="bc-skel-body">
-                <div class="bc-skel-av"></div>
-                <div class="bc-skel-lines">
-                  <div class="bc-skel-line w1"></div>
-                  <div class="bc-skel-line w2"></div>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      {:else if filteredBodycams.length === 0}
-        <div class="bc-empty" role="status">
-          <div class="bc-empty-ico" aria-hidden="true"><VideoOff size={40} strokeWidth={1.25} /></div>
-          <p class="bc-empty-title">No channels match</p>
-          <p class="bc-empty-sub">
-            {#if bodycams.length === 0}
-              Units appear when on duty with bodycams enabled. Try refresh, or widen filters.
-            {:else}
-              Adjust search or department filters, or clear the search box.
+      <section class="feed-register">
+        <div class="register-toolbar">
+          <div>
+            <span class="register-kicker font-mono">{FEED_TYPES.find((type) => type.id === selectedType)?.short} registry</span>
+            <h2>{FEED_TYPES.find((type) => type.id === selectedType)?.label}</h2>
+          </div>
+          <div class="filter-row">
+            {#if selectedType === 'bodycam' && departments.length > 1}
+              <label>
+                <span class="sr-only">Department</span>
+                <select bind:value={department}>
+                  <option value="all">All departments</option>
+                  {#each departments as value (value)}<option value={value}>{value.toUpperCase()}</option>{/each}
+                </select>
+              </label>
             {/if}
-          </p>
-          {#if searchQuery.trim() || filterDept !== 'all'}
-            <button type="button" class="bc-empty-reset" onclick={() => { clearSearch(); filterDept = 'all'; }}>
-              Reset filters
-            </button>
-          {/if}
+            <label class="search-field">
+              <Search size={14} />
+              <span class="sr-only">Search feeds</span>
+              <input bind:value={searchQuery} type="search" placeholder="Search unit, operator, plate" />
+            </label>
+          </div>
         </div>
-      {:else}
-        <section class="bc-grid" aria-label="Bodycam channels">
-          {#each filteredBodycams as bodycam, i (bodycam.source)}
-            {@const isOwn = isOwnFeed(bodycam)}
-            {@const hasAudio = audioEnabled[bodycam.source]}
-            <article class="bc-card" class:own={isOwn} style="--idx: {i}">
-              <div class="bc-card-preview">
-                {#if bodycam.avatar}
-                  <img
-                    class="bc-preview-img"
-                    src={previewSrc(bodycam.avatar)}
-                    alt=""
-                    loading="lazy"
-                    decoding="async"
-                  />
-                {:else}
-                  <div class="bc-preview-fallback" style="--preview-h: {(Number(bodycam.source) || 0) * 47 % 360}">
-                    <span class="bc-preview-initials font-mono">{nameInitials(bodycam.name)}</span>
-                  </div>
-                {/if}
-                <div class="bc-preview-glass" aria-hidden="true"></div>
-                <div class="bc-preview-top">
-                  <span class="bc-cam-id font-mono">CAM {String(bodycam.source).padStart(3, '0')}</span>
-                  <span class="bc-preview-pill">
-                    <span class="bc-preview-dot" aria-hidden="true"></span>
-                    Preview
-                  </span>
-                </div>
-                <div class="bc-preview-mid">
-                  <span class="bc-preview-callsign font-mono">{bodycam.callsign}</span>
-                </div>
-                <div class="bc-preview-bot">
-                  <span class="bc-hud-muted font-mono">Still · ~2–3 min</span>
-                  <span class="bc-hud-muted font-mono">{bodycam.viewerCount || 0} watching</span>
-                </div>
-              </div>
 
-              <div class="bc-card-body">
-                <div class="bc-officer">
-                  <div class="bc-avatar">
-                    {#if bodycam.avatar}
-                      <img class="bc-avatar-img" src={bodycam.avatar} alt="" />
-                    {:else}
-                      <span class="bc-avatar-ix font-mono">{nameInitials(bodycam.name)}</span>
-                    {/if}
-                  </div>
-                  <div class="bc-officer-text">
-                    <div class="bc-name-row">
-                      <span class="bc-name">{bodycam.name}</span>
-                      {#if isOwn}
-                        <span class="bc-you">You</span>
-                      {/if}
-                    </div>
-                    <span class="bc-meta font-mono"
-                      >{bodycam.rank} · {String(bodycam.department || '').toUpperCase()}</span
-                    >
-                  </div>
-                </div>
-
-                <div class="bc-card-actions">
-                  <button
-                    type="button"
-                    class="bc-audio"
-                    class:active={hasAudio}
-                    onclick={() => toggleAudio(bodycam.source)}
-                    title={hasAudio ? 'Mute audio for this channel' : 'Unmute audio for this channel'}
-                    aria-label={hasAudio ? 'Mute audio for this channel' : 'Unmute audio for this channel'}
-                    aria-pressed={hasAudio}
-                  >
-                    {#if hasAudio}
-                      <Volume2 size={15} strokeWidth={2} />
-                    {:else}
-                      <VolumeX size={15} strokeWidth={2} />
-                    {/if}
-                  </button>
-                  <button
-                    type="button"
-                    class="bc-btn-watch"
-                    onclick={() => viewBodycam(bodycam.source)}
-                    disabled={busy}
-                  >
-                    <Eye size={15} strokeWidth={2} />
-                    Watch live
-                  </button>
-                </div>
-                <p class="bc-card-foot">
-                  Opens live view over the game world; use Exit (bottom) to return here.
-                </p>
-              </div>
-            </article>
-          {/each}
-        </section>
-      {/if}
-    </section>
-  {:else}
-    <section class="bcam-immersive" aria-label="Bodycam feed">
-      <div class="bcam-corners" aria-hidden="true">
-        <span class="bcam-corner tl"></span>
-        <span class="bcam-corner tr"></span>
-        <span class="bcam-corner bl"></span>
-        <span class="bcam-corner br"></span>
-      </div>
-
-      <header class="bcam-hud bcam-hud--tl" aria-label="Feed timestamp">
-        <time class="bcam-ts-hud font-mono" datetime="">{feedClock}</time>
-      </header>
-
-      <header class="bcam-hud bcam-hud--tr" aria-label="Feed status">
-        <div class="bcam-status">
-          {#if activeBodycam}
-            <span class="bcam-cam-id">BODYCAM {String(activeBodycam.source).padStart(3, '0')}</span>
-          {:else}
-            <span class="bcam-cam-id">BODYCAM ---</span>
-          {/if}
-          <span class="bcam-rec" aria-label="Recording active">
-            <span class="bcam-rec-dot" aria-hidden="true"></span>
-            REC
-          </span>
-        </div>
-      </header>
-
-      <div class="bcam-bottom-center">
-        {#if activeBodycam}
-          <div class="bcam-meta">
-            <div class="bcam-meta-line">
-              <span class="bcam-callsign font-mono">{activeBodycam.callsign}</span>
-              <span class="bcam-name-inline">{activeBodycam.name}</span>
-            </div>
-            <div class="bcam-loc font-mono" title="Target officer position">{liveLocation || 'Locating…'}</div>
+        {#if selectedType === 'air' && capabilities.airSupportConnected}
+          <div class="air-summary" aria-label="Air support downlink summary">
+            <div><span class="font-mono">DOWNLINK</span><strong>Ready</strong></div>
+            <div><span class="font-mono">AIRCRAFT</span><strong>{airFeeds.length} active</strong></div>
+            <div><span class="font-mono">TARGET LOCKS</span><strong>{lockedAirFeeds}</strong></div>
+            <p>Read-only telemetry mirrors authorized PolCam crews in your routing bucket.</p>
           </div>
         {/if}
 
-        <div class="bcam-dock" aria-label="Live feed controls">
-          <div class="bcam-dock-top">
-            <button
-              type="button"
-              class="bcam-exit"
-              onclick={() => backToList()}
-              disabled={busy}
-              title="Return to channel list"
-            >
-              Back to list
-            </button>
-            <p class="bcam-dock-lede">
-              Camera rides on the officer feed below; audio toggle applies to this session only.
+        {#if loading}
+          <div class="loading-state" aria-busy="true" aria-live="polite">
+            <RefreshCw size={20} class="spin" />
+            <span>Loading authorised feeds…</span>
+          </div>
+        {:else if selectedType === 'air' && !capabilities.airSupportConnected}
+          <div class="empty-state">
+            <SignalZero size={30} />
+            <h3>Cortex PolCam is not connected</h3>
+            <p>Start the configured PolCam resource to publish synchronized helicopter-camera feeds.</p>
+          </div>
+        {:else if filteredFeeds.length === 0}
+          <div class="empty-state">
+            {#if selectedType === 'air'}<Helicopter size={30} />{:else}<SignalZero size={30} />{/if}
+            <h3>{selectedType === 'air' ? 'Downlink ready, no aircraft online' : 'No authorised feeds'}</h3>
+            <p>
+              {currentFeeds.length
+                ? 'No feeds match the current filters.'
+                : selectedType === 'air'
+                  ? 'An aircraft appears here when an authorized PolCam operator activates its camera in your routing bucket.'
+                  : 'No on-duty source is currently publishing this camera type.'}
             </p>
           </div>
-          <div class="bcam-key-section">
-            <span class="bcam-section-label">Aim</span>
-            <div class="bcam-keybar">
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Up / Down</span>
-                <kbd class="bcam-k">W</kbd>
-                <kbd class="bcam-k">S</kbd>
-              </div>
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Left / Right</span>
-                <kbd class="bcam-k">A</kbd>
-                <kbd class="bcam-k">D</kbd>
-              </div>
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Zoom</span>
-                <kbd class="bcam-k">Q</kbd>
-                <kbd class="bcam-k">E</kbd>
-              </div>
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Reset view</span>
-                <kbd class="bcam-k">R</kbd>
-              </div>
+        {:else if selectedType === 'air'}
+          <div class="air-table" role="table" aria-label="Air support live feeds">
+            <div class="air-table-head font-mono" role="row">
+              <span role="columnheader">Aircraft</span>
+              <span role="columnheader">Crew</span>
+              <span role="columnheader">Optics</span>
+              <span role="columnheader">Target</span>
+              <span role="columnheader">Viewers</span>
+              <span role="columnheader" class="sr-only">Action</span>
             </div>
+            {#each filteredFeeds as feed (feed.feedId)}
+              <div class="air-row" role="row">
+                <div class="aircraft-cell" role="cell">
+                  <span class="channel-id font-mono">{feed.feedId}</span>
+                  <strong>{feed.callsign || feed.label || 'Air unit'}</strong>
+                  <small>{feed.label || 'Cortex PolCam'}</small>
+                </div>
+                <div class="air-crew-cell" role="cell">
+                  <strong>{feed.callsign || 'Unassigned aircraft'}</strong>
+                  <small>{airCrewLabel(feed)}</small>
+                </div>
+                <div class="air-optics-cell" role="cell">
+                  <strong>{visionLabel(feed.preview?.visionMode)}</strong>
+                  <small>FOV {Math.round(Number(feed.preview?.fov) || 0)}°</small>
+                </div>
+                <div class="air-target-cell" class:locked={feed.tracking?.active} role="cell">
+                  <Crosshair size={14} />
+                  <div>
+                    <strong>{feed.tracking?.active ? 'Target locked' : 'Scanning'}</strong>
+                    <small>{feed.tracking?.active ? (feed.tracking.plate || feed.tracking.vehicleLabel || 'Unidentified') : 'No active lock'}</small>
+                  </div>
+                </div>
+                <div class="viewers-cell font-mono" role="cell">{Number(feed.viewerCount) || 0}</div>
+                <button
+                  type="button"
+                  class="watch-button"
+                  onclick={() => openFeed(feed)}
+                  disabled={busyFeedId !== ''}
+                  aria-label={`Watch ${titleFor(feed)}`}
+                >
+                  {#if busyFeedId === feed.feedId}<span class="spin"><RefreshCw size={14} /></span>{:else}<Eye size={14} />{/if}
+                  Watch
+                </button>
+              </div>
+            {/each}
           </div>
-          <div class="bcam-key-section">
-            <span class="bcam-section-label">Speed</span>
-            <div class="bcam-keybar bcam-keybar-compact">
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Faster pan</span>
-                <kbd class="bcam-k bcam-k-wide">SHIFT</kbd>
-              </div>
-              <div class="bcam-key-group">
-                <span class="bcam-klabel">Slower pan</span>
-                <kbd class="bcam-k bcam-k-wide">CTRL</kbd>
-              </div>
+        {:else}
+          <div class="feed-table" role="table" aria-label={`${selectedType} live feeds`}>
+            <div class="feed-table-head font-mono" role="row">
+              <span role="columnheader">Channel</span>
+              <span role="columnheader">Operator / source</span>
+              <span role="columnheader">State</span>
+              <span role="columnheader">Viewers</span>
+              <span role="columnheader" class="sr-only">Action</span>
             </div>
+            {#each filteredFeeds as feed (feed.feedId)}
+              <div class="feed-row" role="row">
+                <div class="channel-cell" role="cell">
+                  <span class="channel-id font-mono">{feed.feedId}</span>
+                  <strong>{feed.callsign || feed.label || 'Unassigned'}</strong>
+                </div>
+                <div class="source-cell" role="cell">
+                  <strong>{titleFor(feed)}</strong>
+                  <span>{detailFor(feed)}</span>
+                </div>
+                <div class="state-cell" role="cell"><Signal size={13} /><span>Live</span></div>
+                <div class="viewers-cell font-mono" role="cell">{Number(feed.viewerCount) || 0}</div>
+                <button
+                  type="button"
+                  class="watch-button"
+                  onclick={() => openFeed(feed)}
+                  disabled={busyFeedId !== ''}
+                  aria-label={`Watch ${titleFor(feed)}`}
+                >
+                  {#if busyFeedId === feed.feedId}<span class="spin"><RefreshCw size={14} /></span>{:else}<Eye size={14} />{/if}
+                  Watch
+                </button>
+              </div>
+            {/each}
           </div>
-          <div class="bcam-dock-actions">
-            {#if activeBodycam}
-              <button
-                type="button"
-                class="bcam-audio"
-                class:active={audioEnabled[activeBodycam.source]}
-                onclick={() => toggleAudio(activeBodycam.source)}
-                aria-pressed={!!audioEnabled[activeBodycam.source]}
-              >
-                {#if audioEnabled[activeBodycam.source]}
-                  <Volume2 size={14} strokeWidth={2} />
-                  On
-                {:else}
-                  <VolumeX size={14} strokeWidth={2} />
-                  Off
-                {/if}
-              </button>
-            {/if}
-          </div>
-        </div>
-      </div>
-    </section>
-  {/if}
-</div>
+        {/if}
+
+        <footer class="register-footer">
+          {#if selectedType === 'bodycam'}
+            <Video size={14} /><span>Officers can use <code>/bodycam</code> to opt their feed in or out. Frames transmit only while watched.</span>
+          {:else if selectedType === 'dashcam'}
+            <Gauge size={14} /><span>Dashcams appear automatically for on-duty drivers of emergency-class vehicles.</span>
+          {:else}
+            <Crosshair size={14} /><span>Air feeds mirror the operator's position, FOV, vision mode, and tracking state without taking camera control.</span>
+          {/if}
+        </footer>
+      </section>
+    </div>
+  </div>
+{/if}
 
 <style>
-  /* Bodycams — aligned with Citizens registry: cp-page rhythm, tiered surfaces */
-  .bc-page {
-    --bc-ctl-h: calc(40px * var(--mdt-scale));
+  .font-mono { font-family: 'Share Tech Mono', monospace; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+  .camera-page {
+    flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: calc(10px * var(--mdt-scale));
-    padding: calc(14px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
+    padding: calc(12px * var(--mdt-scale));
     color: var(--mdt-text);
-    flex: 1;
-    min-height: 0;
-    width: 100%;
-    container-type: inline-size;
-    container-name: bc-page;
-    animation: bc-fade-in 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-
-  .bc-page.feed-live {
-    padding: 0;
-    gap: 0;
-    background: transparent;
     overflow: hidden;
-    animation: none;
   }
 
-  .bc-shell {
-    display: flex;
-    flex-direction: column;
-    gap: calc(12px * var(--mdt-scale));
-    flex: 1;
-    min-height: 0;
-  }
-
-  .bc-toolbar {
-    display: flex;
-    flex-direction: column;
-    gap: calc(10px * var(--mdt-scale));
-    padding-bottom: calc(16px * var(--mdt-scale));
-    border-bottom: 1px solid var(--mdt-border);
-  }
-
-  .bc-toolbar-r1 {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(min(100%, calc(240px * var(--mdt-scale))), calc(360px * var(--mdt-scale)));
-    gap: calc(12px * var(--mdt-scale)) calc(24px * var(--mdt-scale));
-    align-items: end;
-    min-width: 0;
-  }
-
-  .bc-toolbar-r1 .bc-field-label {
-    margin: 0;
-  }
-
-  .bc-toolbar-r2 {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(min(100%, calc(240px * var(--mdt-scale))), calc(360px * var(--mdt-scale)));
-    gap: calc(8px * var(--mdt-scale)) calc(24px * var(--mdt-scale));
-    align-items: start;
-    min-width: 0;
-  }
-
-  .bc-toolbar-lead {
-    min-width: 0;
-    padding-left: calc(12px * var(--mdt-scale));
-    border-left: 2px solid color-mix(in srgb, var(--mdt-accent) 55%, transparent);
-  }
-
-  .bc-toolbar-search {
-    display: flex;
-    flex-direction: column;
-    gap: calc(6px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .bc-eyebrow {
+  .register-kicker {
     display: inline-flex;
     align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 600;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-
-  .bc-h1 {
-    margin: 0;
-    font-family: 'Unbounded', 'Outfit', system-ui, sans-serif;
-    font-size: calc(22px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1.15;
-    color: var(--mdt-text);
-  }
-
-  .bc-desc {
-    margin: calc(8px * var(--mdt-scale)) 0 0;
-    font-size: calc(11px * var(--mdt-scale));
-    line-height: 1.55;
-    color: var(--mdt-text-muted);
-    max-width: 52ch;
-  }
-
-  .bc-desc-em {
-    font-weight: 600;
-    color: color-mix(in srgb, var(--mdt-accent) 82%, var(--mdt-text-dim));
-  }
-
-  .bc-field-label {
+    gap: calc(7px * var(--mdt-scale));
+    color: var(--mdt-accent);
     font-size: calc(10px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--mdt-text-dim);
+    letter-spacing: .08em;
   }
 
-  .bc-field-help {
-    margin: 0;
-    font-size: calc(10px * var(--mdt-scale));
-    line-height: 1.35;
-    color: var(--mdt-text-muted);
-  }
+  button, input, select { font: inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--mdt-accent); outline-offset: 2px; }
 
-  .bc-field {
-    display: flex;
-    align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    border: 1px solid var(--mdt-border);
-    border-radius: var(--mdt-radius);
-    color: var(--mdt-text-muted);
-  }
-
-  .bc-field:focus-within {
-    border-color: color-mix(in srgb, var(--mdt-accent) 45%, var(--mdt-border));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 0 0 1px color-mix(in srgb, var(--mdt-accent) 18%, transparent);
-  }
-
-  .bc-field-ico {
-    display: flex;
-    flex-shrink: 0;
-    opacity: 0.85;
-  }
-
-  .bc-field input {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    outline: none;
-    background: transparent;
-    color: var(--mdt-text);
-    font: inherit;
-    font-size: calc(12px * var(--mdt-scale));
-  }
-
-  .bc-field-clear {
-    display: flex;
+  .watch-button, .btn-exit, .btn-secondary, .icon-control {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
-    width: calc(28px * var(--mdt-scale));
-    height: calc(28px * var(--mdt-scale));
-    padding: 0;
-    border: 0;
+    gap: calc(7px * var(--mdt-scale));
+    min-height: calc(34px * var(--mdt-scale));
     border-radius: var(--mdt-radius-sm);
-    background: color-mix(in srgb, var(--mdt-surface-3) 80%, transparent);
-    color: var(--mdt-text-muted);
     cursor: pointer;
-    font-size: calc(16px * var(--mdt-scale));
-    line-height: 1;
   }
 
-  .bc-field-clear:hover {
-    color: var(--mdt-text);
-    background: var(--mdt-surface-3);
-  }
-
-  .bc-control-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: calc(12px * var(--mdt-scale));
-    min-height: 0;
-    padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale));
-    border-radius: calc(12px * var(--mdt-scale));
-    border: 1px solid var(--mdt-border);
-    background: color-mix(in srgb, var(--mdt-surface) 92%, var(--mdt-bg));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  }
-
-  .bc-stat-strip {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0;
-    flex: 1;
-    min-width: min(100%, calc(280px * var(--mdt-scale)));
-  }
-
-  .bc-stat {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    padding: 0 calc(12px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .bc-stat:first-child {
-    padding-left: 0;
-  }
-
-  .bc-stat-k {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(4px * var(--mdt-scale));
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--mdt-text-muted);
-    white-space: nowrap;
-  }
-
-  .bc-stat-k :global(svg) {
-    flex-shrink: 0;
-    opacity: 0.85;
-  }
-
-  .bc-stat-n {
-    font-size: calc(14px * var(--mdt-scale));
-    font-weight: 600;
-    letter-spacing: -0.02em;
-    color: var(--mdt-text);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .bc-stat-div {
-    align-self: center;
-    height: calc(22px * var(--mdt-scale));
-    width: 1px;
-    margin: 0;
-    background: color-mix(in srgb, var(--mdt-border) 75%, transparent);
-    flex-shrink: 0;
-  }
-
-  .bc-my-feed {
-    margin-left: calc(2px * var(--mdt-scale));
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: calc(8px * var(--mdt-scale));
-    min-height: var(--bc-ctl-h);
-    padding: 0 calc(14px * var(--mdt-scale));
-    border-radius: calc(10px * var(--mdt-scale));
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 40%, var(--mdt-border));
-    background: color-mix(in srgb, var(--mdt-accent-dim) 65%, var(--mdt-surface-2));
-    color: var(--mdt-text);
-    font: inherit;
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      background 0.15s ease,
-      border-color 0.15s ease,
-      transform 0.1s ease;
-  }
-
-  .bc-my-feed:hover:not(:disabled) {
-    border-color: color-mix(in srgb, var(--mdt-accent) 55%, var(--mdt-border));
-    background: color-mix(in srgb, var(--mdt-accent-dim) 100%, var(--mdt-surface-2));
-  }
-
-  .bc-my-feed:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .bc-my-feed:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .bc-my-dot {
-    width: calc(7px * var(--mdt-scale));
-    height: calc(7px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-accent);
-    animation: bc-pulse-dot 2s ease-in-out infinite;
-  }
-
-  .bc-control-end {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    flex-shrink: 0;
-  }
-
-  .bc-dept-lbl {
-    margin: 0;
-    flex-shrink: 0;
-  }
-
-  .bc-segment {
-    display: inline-flex;
-    align-items: stretch;
-    border: 1px solid var(--mdt-border);
-    border-radius: calc(10px * var(--mdt-scale));
-    overflow: hidden;
-    background: var(--mdt-surface);
-    min-height: var(--bc-ctl-h);
-  }
-
-  .bc-seg-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: var(--bc-ctl-h);
-    padding: 0 calc(14px * var(--mdt-scale));
-    border: none;
-    border-right: 1px solid var(--mdt-border);
-    background: transparent;
-    color: var(--mdt-text-muted);
-    font-family: 'Share Tech Mono', ui-monospace, monospace;
-    font-size: calc(10px * var(--mdt-scale));
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    transition: color 0.12s ease, background 0.12s ease;
-  }
-
-  .bc-seg-btn:last-child {
-    border-right: none;
-  }
-
-  .bc-seg-btn:hover {
-    color: var(--mdt-text);
-    background: var(--mdt-surface-2);
-  }
-
-  .bc-seg-btn.sel {
-    color: var(--mdt-accent);
-    background: var(--mdt-accent-dim);
-  }
-
-  .bc-seg-btn:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--mdt-accent) 55%, transparent);
-    outline-offset: 1px;
-    position: relative;
-    z-index: 1;
-  }
-
-  .bc-seg-btn:active {
-    transform: scale(0.99);
-  }
-
-  .bc-icon-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--bc-ctl-h);
-    height: var(--bc-ctl-h);
-    box-sizing: border-box;
-    padding: 0;
-    border-radius: calc(10px * var(--mdt-scale));
-    border: 1px solid var(--mdt-border);
-    background: var(--mdt-surface-2);
-    color: var(--mdt-text-dim);
-    cursor: pointer;
-    transition:
-      color 0.12s ease,
-      background 0.12s ease,
-      border-color 0.12s ease;
-  }
-
-  .bc-icon-btn:hover:not(:disabled) {
-    color: var(--mdt-text);
-    border-color: var(--mdt-border-2);
-    background: var(--mdt-surface-3);
-  }
-
-  .bc-icon-btn:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--mdt-accent) 65%, transparent);
-    outline-offset: 2px;
-  }
-
-  .bc-icon-btn:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .bc-icon-btn:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .bc-refresh-ico {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: inherit;
-  }
-
-  .bc-refresh-ico.bc-spin {
-    animation: bc-rot 0.75s linear infinite;
-  }
-
-  .bc-error {
-    padding: calc(8px * var(--mdt-scale)) calc(10px * var(--mdt-scale));
-    border-radius: var(--mdt-radius);
-    border: 1px solid color-mix(in srgb, var(--mdt-error) 45%, transparent);
-    background: color-mix(in srgb, var(--mdt-error) 12%, var(--mdt-surface));
-    color: var(--mdt-error);
-    font-size: calc(12px * var(--mdt-scale));
-  }
-
-  .bc-error-float {
-    position: fixed;
-    top: calc(72px * var(--mdt-scale));
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 80;
-    max-width: min(92vw, calc(420px * var(--mdt-scale)));
-    margin: 0;
-    pointer-events: auto;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 calc(8px * var(--mdt-scale)) calc(28px * var(--mdt-scale)) rgba(0, 0, 0, 0.45);
-  }
-
-  .bc-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, calc(300px * var(--mdt-scale))), 1fr));
-    gap: calc(12px * var(--mdt-scale));
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    padding: calc(4px * var(--mdt-scale)) calc(2px * var(--mdt-scale)) calc(8px * var(--mdt-scale)) 0;
-    align-content: start;
-  }
-
-  .bc-grid-skel {
-    pointer-events: none;
-  }
-
-  .bc-skel-card {
-    border: 1px solid var(--mdt-border);
-    border-radius: calc(12px * var(--mdt-scale));
-    background: var(--mdt-surface);
-    overflow: hidden;
-    animation: bc-card-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    animation-delay: calc(var(--sk) * 55ms);
-    opacity: 0;
-  }
-
-  .bc-skel-preview {
-    height: calc(168px * var(--mdt-scale));
-    background: linear-gradient(
-      110deg,
-      var(--mdt-surface-3) 0%,
-      var(--mdt-surface-2) 40%,
-      var(--mdt-surface-3) 80%
-    );
-    background-size: 200% 100%;
-    animation: bc-shimmer 1.2s ease-in-out infinite;
-    animation-delay: calc(var(--sk) * 80ms);
-  }
-
-  .bc-skel-body {
-    display: flex;
-    gap: calc(10px * var(--mdt-scale));
-    padding: calc(12px * var(--mdt-scale));
-  }
-
-  .bc-skel-av {
-    width: calc(38px * var(--mdt-scale));
-    height: calc(38px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-surface-3);
-    flex-shrink: 0;
-  }
-
-  .bc-skel-lines {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: calc(8px * var(--mdt-scale));
-    justify-content: center;
-    min-width: 0;
-  }
-
-  .bc-skel-line {
-    height: calc(10px * var(--mdt-scale));
-    border-radius: 4px;
-    background: var(--mdt-surface-3);
-  }
-
-  .bc-skel-line.w1 {
-    width: 72%;
-  }
-  .bc-skel-line.w2 {
-    width: 48%;
-  }
-
-  .bc-empty {
-    flex: 1;
-    min-height: calc(200px * var(--mdt-scale));
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: calc(8px * var(--mdt-scale));
-    padding: calc(28px * var(--mdt-scale));
-    text-align: center;
-    color: var(--mdt-text-muted);
-    background: var(--mdt-surface);
-    border-radius: calc(12px * var(--mdt-scale));
-    border: 1px dashed var(--mdt-border);
-  }
-
-  .bc-empty-ico {
-    opacity: 0.35;
-    margin-bottom: calc(4px * var(--mdt-scale));
-  }
-
-  .bc-empty-title {
-    margin: 0;
-    font-size: calc(14px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text-dim);
-  }
-
-  .bc-empty-sub {
-    margin: 0;
-    font-size: calc(11px * var(--mdt-scale));
-    line-height: 1.45;
-    max-width: 40ch;
-  }
-
-  .bc-empty-reset {
-    margin-top: calc(6px * var(--mdt-scale));
-    padding: calc(8px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    border-radius: calc(10px * var(--mdt-scale));
+  .btn-secondary, .icon-control {
+    padding: 0 calc(11px * var(--mdt-scale));
     border: 1px solid var(--mdt-border-2);
-    background: var(--mdt-surface-3);
-    color: var(--mdt-text);
-    font: inherit;
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 500;
-    cursor: pointer;
+    background: var(--mdt-surface-2);
+    color: var(--mdt-text-dim);
   }
 
-  .bc-empty-reset:hover {
-    border-color: color-mix(in srgb, var(--mdt-accent) 35%, var(--mdt-border));
-  }
+  .btn-secondary:hover, .icon-control:hover { border-color: var(--mdt-accent); color: var(--mdt-text); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
 
-  .bc-card {
+  .status-strip {
+    display: flex;
+    align-items: stretch;
+    min-height: calc(42px * var(--mdt-scale));
     border: 1px solid var(--mdt-border);
-    border-radius: calc(12px * var(--mdt-scale));
+    border-radius: var(--mdt-radius-sm);
     background: var(--mdt-surface);
     overflow: hidden;
-    display: flex;
-    flex-direction: column;
-    transition:
-      border-color 0.18s ease,
-      box-shadow 0.18s ease,
-      transform 0.14s cubic-bezier(0.16, 1, 0.3, 1);
-    animation: bc-card-in 0.38s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    animation-delay: calc(var(--idx) * 45ms);
-    opacity: 0;
   }
-
-  .bc-card:hover {
-    border-color: var(--mdt-border-2);
-    box-shadow: 0 calc(8px * var(--mdt-scale)) calc(24px * var(--mdt-scale)) color-mix(in srgb, var(--mdt-bg) 55%, transparent);
-    transform: translateY(calc(-2px * var(--mdt-scale)));
-  }
-
-  .bc-card.own {
-    border-color: color-mix(in srgb, var(--mdt-accent) 38%, var(--mdt-border));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mdt-accent) 12%, transparent);
-  }
-
-  .bc-card-preview {
-    position: relative;
-    height: calc(172px * var(--mdt-scale));
-    background: var(--mdt-bg);
-    overflow: hidden;
-  }
-
-  .bc-preview-img {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    filter: saturate(0.9) contrast(1.05) brightness(0.93);
-    transform: scale(1.02);
-  }
-
-  .bc-preview-fallback {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background:
-      radial-gradient(ellipse at 30% 20%, hsl(var(--preview-h) 42% 40% / 0.35), transparent 55%),
-      linear-gradient(165deg, var(--mdt-surface) 0%, var(--mdt-bg) 100%);
-  }
-
-  .bc-preview-initials {
-    font-size: calc(34px * var(--mdt-scale));
-    font-weight: 700;
-    color: rgba(255, 255, 255, 0.18);
-    letter-spacing: 0.1em;
-  }
-
-  .bc-preview-glass {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.1),
-      inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-    border-bottom: 1px solid var(--mdt-border);
-  }
-
-  .bc-preview-top {
-    position: absolute;
-    top: calc(8px * var(--mdt-scale));
-    left: calc(10px * var(--mdt-scale));
-    right: calc(10px * var(--mdt-scale));
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    z-index: 2;
-  }
-
-  .bc-cam-id {
-    font-size: calc(9px * var(--mdt-scale));
-    color: rgba(255, 255, 255, 0.38);
-    letter-spacing: 0.1em;
-  }
-
-  .bc-preview-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    padding: calc(2px * var(--mdt-scale)) calc(7px * var(--mdt-scale));
-    border-radius: calc(6px * var(--mdt-scale));
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 28%, transparent);
-    background: color-mix(in srgb, var(--mdt-bg) 45%, transparent);
-    font-size: calc(9px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    color: var(--mdt-accent);
-    font-family: 'Share Tech Mono', ui-monospace, monospace;
-  }
-
-  .bc-preview-dot {
-    width: calc(5px * var(--mdt-scale));
-    height: calc(5px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-accent);
-    opacity: 0.9;
-    animation: bc-pulse-dot 2s ease-in-out infinite;
-  }
-
-  .bc-preview-mid {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1;
-  }
-
-  .bc-preview-callsign {
-    font-size: calc(26px * var(--mdt-scale));
-    color: rgba(255, 255, 255, 0.12);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.75);
-  }
-
-  .bc-preview-bot {
-    position: absolute;
-    bottom: calc(8px * var(--mdt-scale));
-    left: calc(10px * var(--mdt-scale));
-    right: calc(10px * var(--mdt-scale));
-    display: flex;
-    justify-content: space-between;
-    z-index: 2;
-  }
-
-  .bc-hud-muted {
-    font-size: calc(9px * var(--mdt-scale));
-    color: rgba(255, 255, 255, 0.32);
-    letter-spacing: 0.04em;
-  }
-
-  .bc-card-body {
-    padding: calc(12px * var(--mdt-scale));
-    display: flex;
-    flex-direction: column;
-    gap: calc(12px * var(--mdt-scale));
-  }
-
-  .bc-officer {
-    display: flex;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .bc-avatar {
-    width: calc(38px * var(--mdt-scale));
-    height: calc(38px * var(--mdt-scale));
-    border-radius: 50%;
-    background: var(--mdt-surface-3);
-    border: 1px solid var(--mdt-border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    overflow: hidden;
-  }
-
-  .bc-avatar-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .bc-avatar-ix {
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 700;
-    color: var(--mdt-text-dim);
-    letter-spacing: 0.04em;
-  }
-
-  .bc-officer-text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: calc(3px * var(--mdt-scale));
-  }
-
-  .bc-name-row {
-    display: flex;
-    align-items: center;
-    gap: calc(8px * var(--mdt-scale));
-    min-width: 0;
-  }
-
-  .bc-name {
-    font-size: calc(13px * var(--mdt-scale));
-    font-weight: 600;
-    color: var(--mdt-text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .bc-you {
-    flex-shrink: 0;
-    padding: calc(2px * var(--mdt-scale)) calc(6px * var(--mdt-scale));
-    border-radius: calc(4px * var(--mdt-scale));
-    background: var(--mdt-accent-dim);
-    color: var(--mdt-accent);
-    font-size: calc(9px * var(--mdt-scale));
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 22%, transparent);
-  }
-
-  .bc-meta {
-    font-size: calc(10px * var(--mdt-scale));
-    color: var(--mdt-text-muted);
-    letter-spacing: 0.03em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .bc-card-actions {
-    display: flex;
-    align-items: stretch;
-    gap: calc(8px * var(--mdt-scale));
-    min-height: var(--bc-ctl-h);
-  }
-
-  .bc-card-foot {
-    margin: 0;
-    font-size: calc(10px * var(--mdt-scale));
-    line-height: 1.45;
-    color: var(--mdt-text-muted);
-    padding: calc(10px * var(--mdt-scale)) 0 0;
-    border-top: 1px solid color-mix(in srgb, var(--mdt-border) 70%, transparent);
-  }
-
-  .bc-audio {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 0 0 var(--bc-ctl-h);
-    width: var(--bc-ctl-h);
-    min-height: var(--bc-ctl-h);
-    max-height: var(--bc-ctl-h);
-    padding: 0;
-    box-sizing: border-box;
-    border: 1px solid var(--mdt-border);
-    border-radius: calc(10px * var(--mdt-scale));
-    background: var(--mdt-surface-2);
-    color: var(--mdt-text-muted);
-    cursor: pointer;
-    transition:
-      color 0.12s ease,
-      border-color 0.12s ease,
-      background 0.12s ease;
-  }
-
-  .bc-audio:hover {
-    color: var(--mdt-text);
-    border-color: var(--mdt-border-2);
-  }
-
-  .bc-audio.active {
-    color: var(--mdt-accent);
-    border-color: color-mix(in srgb, var(--mdt-accent) 32%, transparent);
-    background: var(--mdt-accent-dim);
-  }
-
-  .bc-audio:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--mdt-accent) 50%, transparent);
-    outline-offset: 2px;
-  }
-
-  .bc-audio:active {
-    transform: scale(0.98);
-  }
-
-  .bc-btn-watch {
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: calc(8px * var(--mdt-scale));
-    min-height: var(--bc-ctl-h);
-    max-height: var(--bc-ctl-h);
-    padding: 0 calc(14px * var(--mdt-scale));
-    box-sizing: border-box;
-    border: 1px solid color-mix(in srgb, var(--mdt-accent) 45%, var(--mdt-border));
-    border-radius: calc(10px * var(--mdt-scale));
-    background: linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--mdt-accent) 88%, var(--mdt-bg)),
-      color-mix(in srgb, var(--mdt-accent) 52%, var(--mdt-bg))
-    );
-    color: var(--mdt-bg);
-    font: inherit;
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 600;
-    cursor: pointer;
-    transition:
-      filter 0.12s ease,
-      transform 0.1s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  :global([data-theme='cortex']) .bc-btn-watch {
-    color: #141820;
-  }
-
-  .bc-btn-watch:hover:not(:disabled) {
-    filter: brightness(1.06);
-  }
-
-  .bc-btn-watch:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .bc-btn-watch:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .bc-btn-watch:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--mdt-accent) 70%, transparent);
-    outline-offset: 2px;
-  }
-
-  @container bc-page (max-width: 720px) {
-    .bc-toolbar-r1,
-    .bc-toolbar-r2 {
-      grid-template-columns: 1fr;
-    }
-
-    .bc-toolbar-r1 {
-      align-items: start;
-    }
-
-    .bc-control-row {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .bc-stat-strip {
-      width: 100%;
-    }
-
-    .bc-control-end {
-      justify-content: flex-start;
-    }
-  }
-
-  /* Live overlay (game view) */
-  .bcam-immersive {
-    --bcam-frame-inset: calc(18px * var(--mdt-scale));
-    --bcam-corner-arm: calc(34px * var(--mdt-scale));
-    --bcam-hud-gap: calc(8px * var(--mdt-scale));
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    pointer-events: none;
-    font-family: 'Bahnschrift', 'Segoe UI', 'Helvetica Neue', sans-serif;
-  }
-
-  .bcam-corners {
-    position: absolute;
-    inset: var(--bcam-frame-inset);
-    z-index: 3;
-    pointer-events: none;
-  }
-
-  .bcam-corner {
-    position: absolute;
-    width: var(--bcam-corner-arm);
-    height: var(--bcam-corner-arm);
-    border: 2px solid rgba(255, 255, 255, 0.48);
-    box-sizing: border-box;
-    filter: drop-shadow(0 0 calc(6px * var(--mdt-scale)) rgba(0, 0, 0, 0.45));
-  }
-
-  .bcam-corner.tl {
-    top: 0;
-    left: 0;
-    border-right: none;
-    border-bottom: none;
-  }
-
-  .bcam-corner.tr {
-    top: 0;
-    right: 0;
-    border-left: none;
-    border-bottom: none;
-  }
-
-  .bcam-corner.bl {
-    bottom: 0;
-    left: 0;
-    border-right: none;
-    border-top: none;
-  }
-
-  .bcam-corner.br {
-    bottom: 0;
-    right: 0;
-    border-left: none;
-    border-top: none;
-  }
-
-  .bcam-hud {
-    position: absolute;
-    z-index: 4;
-    pointer-events: none;
-    text-shadow: 0 1px calc(10px * var(--mdt-scale)) rgba(0, 0, 0, 0.88);
-  }
-
-  .bcam-hud--tl {
-    top: var(--bcam-frame-inset);
-    left: var(--bcam-frame-inset);
-    padding:
-      calc(var(--bcam-corner-arm) + var(--bcam-hud-gap))
-      var(--bcam-hud-gap)
-      var(--bcam-hud-gap)
-      calc(var(--bcam-corner-arm) + var(--bcam-hud-gap));
-  }
-
-  .bcam-hud--tr {
-    top: var(--bcam-frame-inset);
-    right: var(--bcam-frame-inset);
-    padding:
-      calc(var(--bcam-corner-arm) + var(--bcam-hud-gap))
-      calc(var(--bcam-corner-arm) + var(--bcam-hud-gap))
-      var(--bcam-hud-gap)
-      var(--bcam-hud-gap);
-  }
-
-  .bcam-ts-hud {
-    display: block;
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 500;
-    letter-spacing: 0.06em;
-    color: rgba(255, 255, 255, 0.5);
-    white-space: nowrap;
-  }
-
-  .bcam-status {
-    display: inline-flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: calc(8px * var(--mdt-scale));
-    max-width: min(calc(42vw), calc(280px * var(--mdt-scale)));
-  }
-
-  .bcam-exit {
-    pointer-events: auto;
-    flex-shrink: 0;
-    padding: calc(8px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
-    border: 1px solid rgba(255, 255, 255, 0.35);
-    border-radius: calc(10px * var(--mdt-scale));
-    background: color-mix(in srgb, #f8fafc 96%, var(--mdt-surface-2));
-    color: #0f172a;
-    font-family: inherit;
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.55),
-      0 2px 0 rgba(15, 23, 42, 0.12);
-    transition: transform 0.1s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .bcam-exit:hover:not(:disabled) {
-    filter: brightness(1.04);
-  }
-
-  .bcam-exit:active:not(:disabled) {
-    transform: scale(0.98);
-  }
-
-  .bcam-exit:focus-visible {
-    outline: 2px solid rgba(96, 165, 250, 0.85);
-    outline-offset: 2px;
-  }
-
-  .bcam-exit:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .bcam-bottom-center {
-    position: absolute;
-    left: 50%;
-    bottom: calc(var(--bcam-frame-inset) + var(--bcam-hud-gap));
-    transform: translateX(-50%);
-    z-index: 4;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: calc(10px * var(--mdt-scale));
-    width: min(
-      calc(100% - 2 * (var(--bcam-frame-inset) + var(--bcam-corner-arm) + var(--bcam-hud-gap))),
-      calc(1100px * var(--mdt-scale))
-    );
-    pointer-events: none;
-  }
-
-  .bcam-meta {
-    max-width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: calc(3px * var(--mdt-scale));
-    text-align: center;
-    text-shadow: 0 1px 14px rgba(0, 0, 0, 0.9);
-    pointer-events: none;
-  }
-
-  .bcam-dock {
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: calc(12px * var(--mdt-scale));
-    width: 100%;
-    padding: calc(12px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-    background: rgba(15, 23, 42, 0.82);
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: calc(12px * var(--mdt-scale));
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.06),
-      0 calc(12px * var(--mdt-scale)) calc(40px * var(--mdt-scale)) rgba(0, 0, 0, 0.55);
-    pointer-events: auto;
-  }
-
-  .bcam-dock-top {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: calc(10px * var(--mdt-scale));
-    width: 100%;
-  }
-
-  .bcam-dock-lede {
-    margin: 0;
-    flex: 1;
-    min-width: min(100%, calc(280px * var(--mdt-scale)));
-    font-size: calc(11px * var(--mdt-scale));
-    line-height: 1.45;
-    font-weight: 500;
-    color: rgba(248, 250, 252, 0.72);
-    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.85);
-  }
-
-  .bcam-key-section {
-    display: flex;
-    flex-direction: column;
-    gap: calc(6px * var(--mdt-scale));
-    width: 100%;
-  }
-
-  .bcam-section-label {
-    font-size: calc(9px * var(--mdt-scale));
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.38);
-  }
-
-  .bcam-keybar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-start;
-    gap: calc(12px * var(--mdt-scale)) calc(16px * var(--mdt-scale));
-    width: 100%;
-  }
-
-  .bcam-keybar-compact {
-    gap: calc(10px * var(--mdt-scale)) calc(14px * var(--mdt-scale));
-  }
-
-  .bcam-cam-id {
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    color: rgba(255, 255, 255, 0.58);
-    white-space: nowrap;
-  }
-
-  .bcam-rec {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 800;
-    letter-spacing: 0.12em;
-    color: #fca5a5;
-    white-space: nowrap;
-  }
-
-  .bcam-rec-dot {
-    width: calc(6px * var(--mdt-scale));
-    height: calc(6px * var(--mdt-scale));
-    border-radius: 50%;
-    background: #ef4444;
-    animation: bc-pulse-dot 1s ease-in-out infinite;
-  }
-
-  .bcam-key-group {
-    display: flex;
-    align-items: center;
-    gap: calc(6px * var(--mdt-scale));
-  }
-
-  .bcam-klabel {
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 500;
-    color: #fff;
-    letter-spacing: 0.02em;
-    white-space: nowrap;
-  }
-
-  .bcam-klabel::after {
-    content: ':';
-    margin-left: 1px;
-    opacity: 0.9;
-  }
-
-  .bcam-k {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: calc(26px * var(--mdt-scale));
-    min-width: calc(28px * var(--mdt-scale));
-    padding: calc(4px * var(--mdt-scale)) calc(9px * var(--mdt-scale));
-    border-radius: calc(7px * var(--mdt-scale));
-    border: none;
-    background: #f1f5f9;
-    font-family: inherit;
-    font-size: calc(11px * var(--mdt-scale));
-    font-weight: 800;
-    color: #0f172a;
-    letter-spacing: 0.04em;
-    line-height: 1;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-  }
-
-  .bcam-k-wide {
-    min-width: auto;
-    padding-left: calc(11px * var(--mdt-scale));
-    padding-right: calc(11px * var(--mdt-scale));
-  }
-
-  .bcam-meta-line {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: center;
-    gap: calc(8px * var(--mdt-scale));
-  }
-
-  .bcam-callsign {
-    font-size: calc(12px * var(--mdt-scale));
-    font-weight: 700;
-    color: rgba(255, 255, 255, 0.92);
-    letter-spacing: 0.06em;
-  }
-
-  .bcam-name-inline {
-    font-size: calc(13px * var(--mdt-scale));
-    font-weight: 600;
-    color: rgba(255, 255, 255, 0.88);
-  }
-
-  .bcam-loc {
-    font-size: calc(11px * var(--mdt-scale));
-    color: rgba(255, 255, 255, 0.62);
-    letter-spacing: 0.03em;
-  }
-
-  .bcam-dock-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: calc(8px * var(--mdt-scale));
-    width: 100%;
-    padding-top: calc(4px * var(--mdt-scale));
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .bcam-audio {
-    display: inline-flex;
-    align-items: center;
-    gap: calc(5px * var(--mdt-scale));
-    padding: calc(6px * var(--mdt-scale)) calc(11px * var(--mdt-scale));
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    border-radius: calc(8px * var(--mdt-scale));
-    background: #f1f5f9;
-    color: #0f172a;
-    font-family: inherit;
-    font-size: calc(10px * var(--mdt-scale));
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    cursor: pointer;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
-  }
-
-  .bcam-audio.active {
-    outline: 2px solid color-mix(in srgb, var(--mdt-accent) 70%, transparent);
-    outline-offset: 1px;
-  }
-
-  @media (max-width: 720px) {
-    .bcam-dock-top {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .bcam-keybar {
-      justify-content: flex-start;
-    }
-
-    .bcam-dock-actions {
-      justify-content: center;
-    }
-  }
-
-  .font-mono {
-    font-family: 'Share Tech Mono', 'JetBrains Mono', ui-monospace, monospace;
-  }
-
-  @keyframes bc-fade-in {
-    from {
-      opacity: 0;
-      transform: translateY(calc(4px * var(--mdt-scale)));
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes bc-card-in {
-    from {
-      opacity: 0;
-      transform: translateY(calc(10px * var(--mdt-scale)));
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
-  @keyframes bc-pulse-dot {
-    0%,
-    100% {
-      opacity: 1;
-    }
-    50% {
-      opacity: 0.35;
-    }
-  }
-
-  @keyframes bc-rot {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  @keyframes bc-shimmer {
-    0% {
-      background-position: 200% 0;
-    }
-    100% {
-      background-position: -200% 0;
-    }
+  .status-strip > div { display: flex; align-items: center; gap: calc(7px * var(--mdt-scale)); padding: 0 calc(14px * var(--mdt-scale)); border-right: 1px solid var(--mdt-border); color: var(--mdt-text-muted); font-size: calc(11px * var(--mdt-scale)); }
+  .status-strip strong { color: var(--mdt-text); font-variant-numeric: tabular-nums; }
+  .status-strip .system-state { margin-left: auto; border-right: 0; color: var(--mdt-success); }
+  .status-strip .offline { color: var(--mdt-warning); }
+  .status-strip .refresh-button { display: grid; place-items: center; width: calc(42px * var(--mdt-scale)); flex: 0 0 calc(42px * var(--mdt-scale)); border: 0; border-left: 1px solid var(--mdt-border); background: transparent; color: var(--mdt-text-muted); cursor: pointer; }
+  .status-strip .refresh-button:hover:not(:disabled) { color: var(--mdt-accent); background: var(--mdt-surface-2); }
+
+  .notice { display: flex; align-items: center; gap: calc(9px * var(--mdt-scale)); padding: calc(9px * var(--mdt-scale)) calc(11px * var(--mdt-scale)); border: 1px solid var(--mdt-border-2); border-radius: var(--mdt-radius-sm); color: var(--mdt-text-dim); background: var(--mdt-surface); font-size: calc(11px * var(--mdt-scale)); }
+  .notice-error { border-color: color-mix(in srgb, var(--mdt-error) 45%, var(--mdt-border)); color: var(--mdt-error); }
+
+  .workbench { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(calc(190px * var(--mdt-scale)), calc(230px * var(--mdt-scale))) minmax(0, 1fr); gap: calc(10px * var(--mdt-scale)); }
+  .feed-nav, .feed-register { border: 1px solid var(--mdt-border); border-radius: var(--mdt-radius); background: var(--mdt-surface); overflow: hidden; }
+  .feed-nav { display: flex; flex-direction: column; min-width: 0; }
+  .feed-nav > button { display: grid; grid-template-columns: calc(18px * var(--mdt-scale)) 1fr auto; align-items: center; gap: calc(9px * var(--mdt-scale)); width: 100%; min-height: calc(46px * var(--mdt-scale)); padding: 0 calc(12px * var(--mdt-scale)); border: 0; border-bottom: 1px solid var(--mdt-border); border-left: 2px solid transparent; border-radius: 0; background: transparent; color: var(--mdt-text-muted); text-align: left; cursor: pointer; }
+  .feed-nav > button:hover:not(:disabled) { color: var(--mdt-text); background: var(--mdt-surface-2); }
+  .feed-nav > button.active { color: var(--mdt-text); border-left-color: var(--mdt-accent); background: var(--mdt-surface-2); }
+  .feed-nav > button strong { color: var(--mdt-text-dim); font-size: calc(11px * var(--mdt-scale)); }
+  .nav-note { margin-top: auto; padding: calc(14px * var(--mdt-scale)); border-top: 1px solid var(--mdt-border); }
+  .nav-note > span { color: var(--mdt-accent); font-size: calc(10px * var(--mdt-scale)); letter-spacing: .08em; }
+  .nav-note p { margin: calc(7px * var(--mdt-scale)) 0 0; color: var(--mdt-text-muted); font-size: calc(11px * var(--mdt-scale)); line-height: 1.5; }
+
+  .feed-register { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .register-toolbar { display: flex; align-items: center; justify-content: space-between; gap: calc(14px * var(--mdt-scale)); min-height: calc(58px * var(--mdt-scale)); padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); }
+  .register-toolbar h2 { margin: calc(3px * var(--mdt-scale)) 0 0; font-size: calc(16px * var(--mdt-scale)); }
+  .filter-row { display: flex; align-items: center; gap: calc(8px * var(--mdt-scale)); }
+  select, .search-field { min-height: calc(34px * var(--mdt-scale)); border: 1px solid var(--mdt-border); border-radius: var(--mdt-radius-sm); background: var(--mdt-surface-2); color: var(--mdt-text); }
+  select { padding: 0 calc(9px * var(--mdt-scale)); font-size: calc(11px * var(--mdt-scale)); }
+  .search-field { display: flex; align-items: center; gap: calc(7px * var(--mdt-scale)); width: min(calc(280px * var(--mdt-scale)), 36vw); padding: 0 calc(9px * var(--mdt-scale)); color: var(--mdt-text-muted); }
+  .search-field:focus-within { border-color: var(--mdt-accent); }
+  .search-field input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--mdt-text); font-size: calc(11px * var(--mdt-scale)); }
+
+  .air-summary { display: grid; grid-template-columns: repeat(3, auto) minmax(220px, 1fr); align-items: center; gap: 0; min-height: calc(48px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); background: var(--mdt-surface-2); }
+  .air-summary > div { display: flex; flex-direction: column; gap: calc(2px * var(--mdt-scale)); padding: calc(7px * var(--mdt-scale)) calc(14px * var(--mdt-scale)); border-right: 1px solid var(--mdt-border); }
+  .air-summary span { color: var(--mdt-text-muted); font-size: calc(9px * var(--mdt-scale)); letter-spacing: .08em; }
+  .air-summary strong { color: var(--mdt-text-dim); font-size: calc(11px * var(--mdt-scale)); font-weight: 600; }
+  .air-summary > div:first-child strong { color: var(--mdt-success); }
+  .air-summary p { justify-self: end; max-width: 58ch; margin: 0; padding: 0 calc(14px * var(--mdt-scale)); color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); line-height: 1.4; text-align: right; }
+
+  .feed-table, .air-table { flex: 1; min-height: 0; overflow-y: auto; }
+  .feed-table-head, .feed-row { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(190px, 1.45fr) minmax(80px, .45fr) minmax(60px, .25fr) minmax(92px, auto); align-items: center; gap: calc(10px * var(--mdt-scale)); }
+  .feed-table-head { position: sticky; top: 0; z-index: 2; min-height: calc(34px * var(--mdt-scale)); padding: 0 calc(12px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); background: var(--mdt-surface-2); color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); letter-spacing: .06em; text-transform: uppercase; }
+  .feed-row { min-height: calc(62px * var(--mdt-scale)); padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); }
+  .feed-row:hover { background: color-mix(in srgb, var(--mdt-surface-2) 70%, transparent); }
+  .channel-cell, .source-cell { min-width: 0; display: flex; flex-direction: column; gap: calc(3px * var(--mdt-scale)); }
+  .channel-id { color: var(--mdt-accent); font-size: calc(10px * var(--mdt-scale)); }
+  .channel-cell strong, .source-cell strong { overflow: hidden; color: var(--mdt-text); font-size: calc(12px * var(--mdt-scale)); text-overflow: ellipsis; white-space: nowrap; }
+  .source-cell span { overflow: hidden; color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); text-overflow: ellipsis; white-space: nowrap; }
+  .state-cell { display: inline-flex; align-items: center; gap: calc(5px * var(--mdt-scale)); color: var(--mdt-success); font-size: calc(10px * var(--mdt-scale)); }
+  .viewers-cell { color: var(--mdt-text-dim); font-size: calc(11px * var(--mdt-scale)); }
+  .watch-button, .btn-exit { padding: 0 calc(12px * var(--mdt-scale)); border: 0; background: var(--mdt-accent); color: var(--mdt-bg); font-size: calc(10px * var(--mdt-scale)); font-weight: 700; }
+  .watch-button:hover:not(:disabled), .btn-exit:hover:not(:disabled) { opacity: .9; }
+
+  .air-table-head, .air-row { display: grid; grid-template-columns: minmax(130px, .8fr) minmax(150px, .9fr) minmax(110px, .65fr) minmax(150px, 1fr) minmax(56px, .25fr) minmax(92px, auto); align-items: center; gap: calc(10px * var(--mdt-scale)); }
+  .air-table-head { position: sticky; top: 0; z-index: 2; min-height: calc(34px * var(--mdt-scale)); padding: 0 calc(12px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); background: var(--mdt-surface-2); color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); letter-spacing: .06em; text-transform: uppercase; }
+  .air-row { min-height: calc(66px * var(--mdt-scale)); padding: calc(8px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); border-bottom: 1px solid var(--mdt-border); }
+  .air-row:hover { background: color-mix(in srgb, var(--mdt-surface-2) 70%, transparent); }
+  .aircraft-cell, .air-crew-cell, .air-optics-cell { min-width: 0; display: flex; flex-direction: column; gap: calc(3px * var(--mdt-scale)); }
+  .aircraft-cell strong, .air-crew-cell strong, .air-optics-cell strong, .air-target-cell strong { overflow: hidden; color: var(--mdt-text); font-size: calc(12px * var(--mdt-scale)); text-overflow: ellipsis; white-space: nowrap; }
+  .aircraft-cell small, .air-crew-cell small, .air-optics-cell small, .air-target-cell small { overflow: hidden; color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); text-overflow: ellipsis; white-space: nowrap; }
+  .air-target-cell { min-width: 0; display: flex; align-items: center; gap: calc(7px * var(--mdt-scale)); color: var(--mdt-text-muted); }
+  .air-target-cell > div { min-width: 0; display: flex; flex-direction: column; gap: calc(3px * var(--mdt-scale)); }
+  .air-target-cell.locked, .air-target-cell.locked strong { color: var(--mdt-accent); }
+
+  .loading-state, .empty-state { flex: 1; min-height: calc(220px * var(--mdt-scale)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(9px * var(--mdt-scale)); padding: calc(24px * var(--mdt-scale)); color: var(--mdt-text-muted); text-align: center; }
+  .empty-state h3 { margin: calc(3px * var(--mdt-scale)) 0 0; color: var(--mdt-text-dim); font-size: calc(14px * var(--mdt-scale)); }
+  .empty-state p { max-width: 48ch; margin: 0; font-size: calc(11px * var(--mdt-scale)); line-height: 1.5; }
+  .register-footer { display: flex; align-items: center; gap: calc(8px * var(--mdt-scale)); min-height: calc(38px * var(--mdt-scale)); padding: calc(7px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); border-top: 1px solid var(--mdt-border); color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); line-height: 1.4; }
+  .register-footer code { color: var(--mdt-accent); }
+
+  .live-stage { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; justify-content: space-between; padding: calc(20px * var(--mdt-scale)); pointer-events: none; color: var(--mdt-text); }
+  .live-topbar, .live-console { pointer-events: auto; border: 1px solid color-mix(in srgb, var(--mdt-text) 16%, transparent); border-radius: var(--mdt-radius); background: color-mix(in srgb, var(--mdt-bg) 88%, transparent); box-shadow: 0 calc(10px * var(--mdt-scale)) calc(30px * var(--mdt-scale)) color-mix(in srgb, var(--mdt-bg) 60%, transparent); }
+  .live-topbar { align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: calc(14px * var(--mdt-scale)); padding: calc(10px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); border-left: 3px solid var(--mdt-accent); }
+  .live-identity { min-width: 0; display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: baseline; gap: calc(7px * var(--mdt-scale)) calc(12px * var(--mdt-scale)); }
+  .live-kicker { grid-column: 1 / -1; color: var(--mdt-accent); font-size: calc(9px * var(--mdt-scale)); letter-spacing: .1em; }
+  .live-identity strong { font-size: calc(13px * var(--mdt-scale)); }
+  .live-identity > span:last-child { overflow: hidden; color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); text-overflow: ellipsis; white-space: nowrap; }
+  .live-signal { display: inline-flex; align-items: center; gap: calc(7px * var(--mdt-scale)); color: var(--mdt-success); font-family: 'Share Tech Mono', monospace; font-size: calc(9px * var(--mdt-scale)); letter-spacing: .08em; text-transform: uppercase; }
+  .live-signal.signal-warning { color: var(--mdt-warning); }
+  .live-reticle { position: absolute; left: 50%; top: 50%; width: calc(34px * var(--mdt-scale)); height: calc(34px * var(--mdt-scale)); transform: translate(-50%, -50%); opacity: .55; }
+  .live-reticle span:first-child { position: absolute; left: 50%; top: 0; width: 1px; height: 100%; background: var(--mdt-text); }
+  .live-reticle span:last-child { position: absolute; left: 0; top: 50%; width: 100%; height: 1px; background: var(--mdt-text); }
+  .live-telemetry { position: absolute; left: calc(20px * var(--mdt-scale)); bottom: calc(150px * var(--mdt-scale)); display: flex; flex-wrap: wrap; gap: calc(6px * var(--mdt-scale)); max-width: calc(70vw); }
+  .live-telemetry span { padding: calc(4px * var(--mdt-scale)) calc(7px * var(--mdt-scale)); border: 1px solid color-mix(in srgb, var(--mdt-text) 18%, transparent); border-radius: var(--mdt-radius-sm); background: color-mix(in srgb, var(--mdt-bg) 78%, transparent); color: var(--mdt-text-dim); font-size: calc(9px * var(--mdt-scale)); }
+  .live-console { align-self: stretch; display: flex; align-items: center; justify-content: space-between; gap: calc(18px * var(--mdt-scale)); padding: calc(12px * var(--mdt-scale)); }
+  .console-copy { min-width: 0; }
+  .console-label { color: var(--mdt-accent); font-size: calc(9px * var(--mdt-scale)); letter-spacing: .1em; }
+  .console-copy p { margin: calc(5px * var(--mdt-scale)) 0 0; color: var(--mdt-text-muted); font-size: calc(10px * var(--mdt-scale)); line-height: 1.45; }
+  .console-actions { display: flex; align-items: center; justify-content: flex-end; gap: calc(7px * var(--mdt-scale)); flex-wrap: wrap; }
+  .icon-control { width: calc(34px * var(--mdt-scale)); padding: 0; }
+  .active-control { border-color: var(--mdt-accent); color: var(--mdt-accent); }
+
+  .spin { animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+
+  @media (max-width: 860px) {
+    .camera-page { overflow-y: auto; }
+    .status-strip { overflow-x: auto; }
+    .status-strip .system-state { margin-left: 0; min-width: max-content; }
+    .workbench { grid-template-columns: 1fr; }
+    .feed-nav { display: grid; grid-template-columns: repeat(3, 1fr); }
+    .feed-nav > button { grid-template-columns: auto 1fr auto; border-bottom: 0; border-right: 1px solid var(--mdt-border); }
+    .nav-note { display: none; }
+    .register-toolbar { align-items: stretch; flex-direction: column; }
+    .filter-row, .search-field { width: 100%; }
+    .feed-table-head { display: none; }
+    .air-summary { grid-template-columns: repeat(3, 1fr); }
+    .air-summary p { display: none; }
+    .air-table-head { display: none; }
+    .feed-row { grid-template-columns: minmax(0, 1fr) auto; gap: calc(7px * var(--mdt-scale)); }
+    .channel-cell, .source-cell { grid-column: 1; }
+    .state-cell, .viewers-cell { display: none; }
+    .watch-button { grid-column: 2; grid-row: 1 / span 2; }
+    .air-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: calc(8px * var(--mdt-scale)); }
+    .aircraft-cell { grid-column: 1; grid-row: 1; }
+    .air-crew-cell { grid-column: 2; grid-row: 1; }
+    .air-optics-cell { grid-column: 1; grid-row: 2; }
+    .air-target-cell { grid-column: 2; grid-row: 2; }
+    .air-row .viewers-cell { display: none; }
+    .air-row .watch-button { grid-column: 3; grid-row: 1 / span 2; }
+    .live-console { align-items: stretch; flex-direction: column; }
+    .console-actions { justify-content: flex-start; }
+    .live-telemetry { bottom: calc(205px * var(--mdt-scale)); max-width: calc(100vw - 40px * var(--mdt-scale)); }
+  }
+
+  @media (max-width: 560px) {
+    .status-strip > div { padding: 0 calc(10px * var(--mdt-scale)); }
+    .status-strip > div span { display: none; }
+    .feed-nav > button { grid-template-columns: 1fr; justify-items: center; min-height: calc(58px * var(--mdt-scale)); text-align: center; }
+    .feed-nav > button span { font-size: calc(9px * var(--mdt-scale)); }
+    .air-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .air-summary > div { padding-inline: calc(8px * var(--mdt-scale)); }
+    .air-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .air-crew-cell, .air-optics-cell { display: none; }
+    .air-target-cell { grid-column: 1; grid-row: 2; }
+    .air-row .watch-button { grid-column: 2; grid-row: 1 / span 2; }
+    .live-stage { padding: calc(10px * var(--mdt-scale)); }
+    .live-topbar { align-items: flex-start; }
+    .live-identity { grid-template-columns: 1fr; }
+    .live-telemetry { left: calc(10px * var(--mdt-scale)); bottom: calc(245px * var(--mdt-scale)); }
+    .console-actions > button { flex: 1 1 auto; }
   }
 </style>
