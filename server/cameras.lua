@@ -85,11 +85,36 @@ end
 local function officerIsOnDuty(source)
     if not playerExists(source) then return false end
     local framework = rawget(_G, 'CortexMdtFramework')
-    if type(framework) == 'table' and type(framework.isOnDuty) == 'function' then
-        local ok, onDuty = pcall(framework.isOnDuty, source)
-        if ok then return onDuty == true end
+    if type(framework) ~= 'table' or type(framework.isOnDuty) ~= 'function' then
+        return false
     end
-    return GetPlayerPed(source) ~= 0
+
+    local ok, onDuty = pcall(framework.isOnDuty, source)
+    return ok and onDuty == true
+end
+
+local function airFeedCrewIsOnDuty(feed)
+    if type(feed) ~= 'table' then return false end
+
+    local config = getAirSupportConfig()
+    local operatorSource = tonumber(feed.operatorSource)
+    if not operatorSource or operatorSource <= 0 then
+        return false
+    end
+
+    if config.requireOperatorOnDuty ~= false and not officerIsOnDuty(operatorSource) then
+        return false
+    end
+
+    local pilotSource = tonumber(feed.pilotSource)
+    if config.requirePilotOnDuty ~= false
+        and pilotSource and pilotSource > 0
+        and pilotSource ~= operatorSource
+        and not officerIsOnDuty(pilotSource) then
+        return false
+    end
+
+    return true
 end
 
 local function countViewers(viewers)
@@ -843,7 +868,11 @@ local function getAirFeedById(feedId)
     local resource = getAirResource()
     if GetResourceState(resource) ~= 'started' then return nil end
     local ok, feed = pcall(function() return exports[resource]:GetAirFeedById(feedId) end)
-    return ok and sanitizeAirFeed(feed) or nil
+    local sanitized = ok and sanitizeAirFeed(feed) or nil
+    if sanitized and not airFeedCrewIsOnDuty(sanitized) then
+        return nil
+    end
+    return sanitized
 end
 
 local function buildAirFeedRows(source)
@@ -857,6 +886,7 @@ local function buildAirFeedRows(source)
     for i = 1, #feeds do
         local feed = sanitizeAirFeed(feeds[i])
         if feed and feed.operatorSource > 0
+            and airFeedCrewIsOnDuty(feed)
             and sameRoutingBucket(source, feed.operatorSource, config.allowCrossRoutingBuckets) then
             result[#result + 1] = feed
         end
@@ -918,6 +948,7 @@ local function startLiveFeedPushThread()
                     local viewer = viewerSources[i]
                     local allowed = playerExists(viewer) and officerIsOnDuty(viewer)
                         and feed and feed.operatorSource > 0 and playerExists(feed.operatorSource)
+                        and airFeedCrewIsOnDuty(feed)
                         and sameRoutingBucket(viewer, feed.operatorSource, getAirSupportConfig().allowCrossRoutingBuckets)
                     if allowed then
                         TriggerClientEvent('cortex_mdtsv:airFeedFrame', viewer, feed)
@@ -1052,8 +1083,9 @@ local function startLiveFeedView(source, data)
     elseif feedType == 'air' then
         feed = getAirFeedById(feedId)
         if not feed or feed.operatorSource <= 0
+            or not airFeedCrewIsOnDuty(feed)
             or not sameRoutingBucket(source, feed.operatorSource, getAirSupportConfig().allowCrossRoutingBuckets) then
-            return { ok = false, error = 'Air-support feed is unavailable or outside your routing bucket.' }
+            return { ok = false, error = 'Air-support feed is unavailable, off duty, or outside your routing bucket.' }
         end
         local alreadyWatching = currentView and currentView.kind == 'air' and currentView.feedId == feedId
         if not alreadyWatching and countViewers(airFeedViewers[feedId]) >= maximumViewers then

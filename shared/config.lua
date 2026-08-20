@@ -363,6 +363,8 @@ Config.AirSupport = {
     resource = 'cortex_polcam',
     syncIntervalMs = 200,
     allowCrossRoutingBuckets = false,
+    requireOperatorOnDuty = true,
+    requirePilotOnDuty = true,
 }
 
 -- Cross-department visibility for the parity modules. Mutual groups share in
