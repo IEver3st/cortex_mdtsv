@@ -29,6 +29,7 @@ test('air support requires on-duty operator and pilot in every access path', () 
   assert.match(source, /local function airFeedCrewIsOnDuty\(feed\)/);
   assert.match(source, /config\.requireOperatorOnDuty ~= false/);
   assert.match(source, /config\.requirePilotOnDuty ~= false/);
+  assert.match(source, /if not pilotSource or pilotSource <= 0 then[\s\S]*?return false/);
   assert.match(source, /buildAirFeedRows[\s\S]*?airFeedCrewIsOnDuty\(feed\)/);
   assert.match(source, /getAirFeedById[\s\S]*?not airFeedCrewIsOnDuty\(sanitized\)/);
   assert.match(source, /for feedId, viewers in pairs\(airFeedViewers\)[\s\S]*?airFeedCrewIsOnDuty\(feed\)/);
